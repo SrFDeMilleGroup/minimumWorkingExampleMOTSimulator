@@ -145,9 +145,9 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
 	        randX2 = randn(numTrialsPerSpeed,1);
 	        randY2 = randn(numTrialsPerSpeed,1);
 	        randZ2 = randn(numTrialsPerSpeed,1);
-	    for i=1:length(randX2)
-	        (randX2[i],randY2[i],randZ2[i]) =[randX2[i],randY2[i],randZ2[i]]-dot([randX[i],randY[i],randZ[i]],[randX2[i],randY2[i],randZ2[i]])./dot([randX[i],randY[i],randZ[i]],[randX[i],randY[i],randZ[i]]) .* [randX[i],randY[i],randZ[i]];
-	    end
+            for i=1:length(randX2)
+                (randX2[i],randY2[i],randZ2[i]) =[randX2[i],randY2[i],randZ2[i]]-dot([randX[i],randY[i],randZ[i]],[randX2[i],randY2[i],randZ2[i]])./dot([randX[i],randY[i],randZ[i]],[randX[i],randY[i],randZ[i]]) .* [randX[i],randY[i],randZ[i]];
+            end
 	        normTerms = sqrt.(randX2.^2 .+ randY2.^2 .+ randZ2 .^2);
             randVxs = randX2 ./ normTerms .* currSpeed;
             randVys = randY2 ./ normTerms .* currSpeed;
