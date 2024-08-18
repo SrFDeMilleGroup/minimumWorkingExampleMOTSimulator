@@ -311,7 +311,7 @@ else
     bString="BGradGPerCM"
 end
 if saveData==1
-    folderString = string(@__DIR__,"/saveDataBlueLowPowForceXYXAOnlyReal/",saveDataFolderTag,"bFieldSetting",bFieldSetting,bString, bGradReal,"Force",forceProfile,"NumLasers", length(s0),"Test",test);
+    folderString = string(@__DIR__,"/savedDataBlueLowPowForceXYXAOnlyReal/",saveDataFolderTag,"bFieldSetting",bFieldSetting,bString, bGradReal,"Force",forceProfile,"NumLasers", length(s0),"Test",test);
     mkpath(folderString)
 end
 

@@ -3,11 +3,9 @@ using DifferentialEquations
 using BenchmarkTools
 using Octavian
 using LinearAlgebra
-using SharedArrays
 #using Distributed
 #using WignerSymbols
 #using Coverage
-using Trapz
 using DelimitedFiles
 using Statistics
 using Dates
@@ -79,14 +77,11 @@ function preInitializer(numLasers,numZeemanStatesGround,numZeemanStatesTotal)#in
     return pPreInitialized;
 end
 
-function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currDisp,currSpeed,vRound,longSpeed,forceXY);
+function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currDisp,currSpeed,vRound,longSpeed,initDispDir);
     #Function generates a set of random positions and 'pseudo'-random velocities (direction determined by 'velDirRelToR' + whether 'force profile' is 2D or 3D.)
     #if forceProfile is TwoD: z position is assumed to not matter, z velocity is fixed to longSpeed, and direction of velocity relative to random choice of \phi where x=disp*(cos(\phi)), etc. determined by velDirRelToR
     #if forceProfile is ThreeD: longSpeed isn't used, and direction of velocity chosen relative to random x,y,z direction of position is determined by velDirRelToR
-    #velDirRelToR=-1 gives random orientation
-    #velDirRelToR=0 forces v parallel to r
-    #velDirRelToR=1 forces v perpendicular to r (or, for 2D, perpendicular in the xy plane at least)
-    #velDirRelToR=2 forces v anti-parallel to r
+
     if forceProfile=="TwoD"
         #randomize position direction
         randPhisPos = rand(numTrialsPerSpeed, 1) * 2 * pi
@@ -94,10 +89,16 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
         randRys = sin.(randPhisPos) .* currDisp .* 1e-3 .* kA
         randRzs = rand(numTrialsPerSpeed, 1) * 2 * pi
 
-        if velDirRelToR==-1#randomize phi
+        if velDirRelToR == "Random" #randomize phi
             randPhisVels = rand(numTrialsPerSpeed, 1) * 2 * pi
-        else#adjust phis from positions to force v either parallel, orthogonal, or anti-parallel to the r choice
-            randPhisVels = randPhisPos .+ pi/2*velDirRelToR;#pi/2 for ortho, pi for total reversal, 0 for same.
+        elseif velDirRelToR == "Same"
+            randPhisVels = randPhisPos;
+        elseif velDirRelToR == "Orthogonal"
+            randPhisVels = randPhisPos .+ pi/2;
+        elseif velDirRelToR == "Opposite"
+            randPhisVels = randPhisPos .+ pi;
+        else
+            throw(ArgumentError(string("invalid choice of velDirRelToR, ", velDirRelToR, ". Valid options are Same, Orthogonal, Opposite, Random")))
         end
         randVxs = round.(currSpeed .* cos.(randPhisVels) ./ vRound) .* vRound
         randVys = round.(currSpeed .* sin.(randPhisVels) ./ vRound) .* vRound
@@ -111,8 +112,8 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
         randRxs = randX ./ normTerms .* currDisp .* 1e-3 .* kA;
         randRys = randY ./ normTerms .* currDisp .* 1e-3 .* kA;
         randRzs = randZ ./ normTerms .* currDisp .* 1e-3 .* kA;
-        #forceXY forces position to be along (x+y)/sqrt(2) (e.g., entering from slower) (if forceXY==2, then it forces along Z)
-        if forceXY == 1
+        # if initDispDir=="XY", force position to be along (x+y)/sqrt(2) (e.g., entering from slower); if initDispDir=="Z", then it forces along Z
+        if initDispDir == "XY"
             randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(numTrialsPerSpeed, 1);
             randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(numTrialsPerSpeed, 1);
             randRzs = 2 .* pi .* randn(numTrialsPerSpeed, 1);
@@ -120,7 +121,7 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
             randY = randRys ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             randZ = randRzs ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2);
-        elseif forceXY == 2
+        elseif initDispDir == "Z"
             randRxs = 2 .* pi .* randn(numTrialsPerSpeed, 1);
             randRys = 2 .* pi .* randn(numTrialsPerSpeed, 1);
             randRzs = currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(numTrialsPerSpeed, 1);
@@ -128,8 +129,10 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
             randY = randRys ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             randZ = randRzs ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2);
+        else
+            throw(ArgumentError(string("invalid choice of initDispDir, ", initDispDir, ". Valid options are XY or Z")))
         end
-        if velDirRelToR == -1#random velocity direction as wel
+        if velDirRelToR == "Random" #random velocity direction as wel
             randX = randn(numTrialsPerSpeed, 1);#re-roll
             randY = randn(numTrialsPerSpeed, 1);
             randZ = randn(numTrialsPerSpeed, 1);
@@ -137,11 +140,11 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
             randVxs = randX ./ normTerms .* currSpeed;
             randVys = randY ./ normTerms .* currSpeed;
             randVzs = randZ ./ normTerms .* currSpeed;
-        elseif velDirRelToR == 0#same dir
+        elseif velDirRelToR == "Same"
             randVxs = randX ./ normTerms .* currSpeed;
             randVys = randY ./ normTerms .* currSpeed;
             randVzs = randZ ./ normTerms .* currSpeed;
-        elseif velDirRelToR == 1#ortho dir
+        elseif velDirRelToR == "Orthogonal"
 	        randX2 = randn(numTrialsPerSpeed,1);
 	        randY2 = randn(numTrialsPerSpeed,1);
 	        randZ2 = randn(numTrialsPerSpeed,1);
@@ -152,10 +155,12 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
             randVxs = randX2 ./ normTerms .* currSpeed;
             randVys = randY2 ./ normTerms .* currSpeed;
             randVzs = randZ2 ./ normTerms .* currSpeed;
-        elseif velDirRelToR == 2#negative dir
+        elseif velDirRelToR == "Opposite"
             randVxs = -randX ./ normTerms .* currSpeed;
             randVys = -randY ./ normTerms .* currSpeed;
             randVzs = -randZ ./ normTerms .* currSpeed;
+        else
+            throw(ArgumentError(string("invalid choice of velDirRelToR, ", velDirRelToR, ". Valid options are Same, Orthogonal, Opposite, Random")))
         end
         randVxs = round.(randVxs ./ vRound) .* vRound;
         randVys = round.(randVys ./ vRound) .* vRound;
@@ -267,23 +272,6 @@ function createCouplingTermsandLaserMasks(whichTransition)
 
 
     return couplingMatrices,bCouplingMatrices,stateEnergyMatrix,laserMasks,wavenumberRatios,numZeemanStatesGround,numZeemanStatesExcited;
-end
-
-function checkErrors(bFieldSetting,forceProfile,whichTransition,polType)
-    #checks if user made an error (invalid choice for laser transition type, or polarization type, etc.)
-
-    for i = 1:length(whichTransition)
-        (whichTransition[i]=="XA" || whichTransition[i]=="XB" || whichTransition[i]=="XARepump") ||
-        throw(ArgumentError(string("invalid choice of ",whichTransition[i]," in whichTransition element ",i,". Valid options are XA, XB, or XARepump")))
-
-        (polType[i]=="3D" || polType[i]=="2DSS" || polType[i]=="2DPar" || polType[i]=="2DPerp" || polType[i]=="Slower" || polType[i]=="Push") ||
-        throw(ArgumentError(string("invalid choice of ",polType[i]," in polType element ",i,".  Valid options are 3D, 2DSS, 2DPar, 2DPerp, Slower")))
-    end
-    (bFieldSetting=="ThreeD" || bFieldSetting=="TwoD" || bFieldSetting=="Static") ||
-    throw(ArgumentError(string("invalid choice of bFieldSetting, ",bFieldSetting,".  Valid options are ThreeD, TwoD, or Static")))
-
-    (forceProfile=="ThreeD" || forceProfile=="TwoD") ||
-    throw(ArgumentError(string("invalid choice of forceProfile, ",forceProfile,".  Valid options are ThreeD or TwoD")))
 end
 
 function makeCouplingMatrices!(couplingMatrices,a,b,XToB,repump,bichrom,v1BranchingRatioA,v1BranchingRatioB)

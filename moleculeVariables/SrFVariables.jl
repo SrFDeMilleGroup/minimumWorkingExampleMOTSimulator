@@ -1,10 +1,10 @@
-#=
-hbar * Gamma is the unit of energy
-Gamma / k is the unit of velocity, where k is the wavevector
-1 / Gamma is the unit of time
-1 / k (= wavelength / 2pi)  is the unit of length
-1e-3 * hbar * Gamma * k is the unit of force (??)
-=#
+"""
+unit of energy: hbar * Gamma
+unit of velocity: Gamma / k, where k is the wavevector
+unit of time: 1 / Gamma
+unit of length: 1 / k (= wavelength / 2pi)
+unit of force: 1e-3 * hbar * Gamma * k (??)
+"""
 
 const lamA = 663e-9; # m, note: positions normalized to \tilde{x}=k_{SrF,X->A}x
 const lamB = 579e-9; # m
