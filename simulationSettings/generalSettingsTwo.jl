@@ -1,3 +1,7 @@
+# using Revise package in mainSimulationCode.jl to monitor and update the changes in this script, to reduce the need to restart the kernel when making changes
+# https://timholy.github.io/Revise.jl/stable/config/#Configuring-the-revise-mode
+__revise_mode__ = :eval 
+
 module generalSettingsTwo
 
 export longSpeeds, displacementsInMM, userSpeeds, forceProfile, bFieldSetting
@@ -19,8 +23,10 @@ bFieldSetting: can set to 3D quadrupole "ThreeD" (e.g. 3D-MOT"), 2D quadrupole "
 
 # A) parameters for quick test of restoring force
 longSpeeds::Vector{Float64} = [32]
-displacementsInMM::Vector{Float64} = [0.5, 1.5, 3.0, 4.5, 6.0, 7.5]
-userSpeeds::Vector{Float64} = [-4, -3, -2, -1, -0.5, -0.1, -0.05, 0.05, 0.1, 0.5, 1, 2, 3, 4]
+# displacementsInMM::Vector{Float64} = [0.5, 1.5, 3.0, 4.5, 6.0, 7.5]
+# userSpeeds::Vector{Float64} = [-4, -3, -2, -1, -0.5, -0.1, -0.05, 0.05, 0.1, 0.5, 1, 2, 3, 4]
+displacementsInMM::Vector{Float64} = [0.5, 3.0]
+userSpeeds::Vector{Float64} = [0.1, 0.5]
 forceProfile::String = "ThreeD"
 bFieldSetting::String = "ThreeD"
 

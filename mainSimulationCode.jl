@@ -1,39 +1,44 @@
-"""
-unit of energy: hbar * Gamma
-unit of velocity: Gamma / k, where k is the wavevector
-unit of time: 1 / Gamma
-unit of length: 1 / k (= wavelength / 2pi)
-unit of force: 1e-3 * hbar * Gamma * k (??)
-"""
+# unit of energy: hbar * Gamma
+# unit of velocity: Gamma / k, where k is the wavevector
+# unit of time: 1 / Gamma
+# unit of length: 1 / k (= wavelength / 2pi)
+# unit of force: 1e-3 * hbar * Gamma * k (??)
 
 
+using Revise: includet # monitor and update the changes in scripts imported by includet, to reduce the need to restart when making changes to code
+using DifferentialEquations: ODEProblem, EnsembleProblem, solve, remake, Tsit5, EnsembleThreads
+using BenchmarkTools: @time
+using LinearAlgebra: tr, I
+using DelimitedFiles: writedlm
+using Statistics: mean, std
+using Dates: Dates, now
 using SharedArrays: SharedArray
 using Trapz: trapz
 
 
 # 1) Go to directory and load external variables + functions
 cd(@__DIR__); # moves julia terminal to directory where this file is.  This directory should have auxFunctions+SrF(or whatever)Variables files as well
-include("moleculeVariables/SrFVariables.jl") # change this to whatever molecule you care about
-include("auxFunctions/auxFunctions.jl") # supplementary functions
+includet("moleculeVariables/SrFVariables.jl") # change this to whatever molecule you care about
+includet("auxFunctions/auxFunctions.jl") # supplementary functions
 
 
 # 2) User choices with respect to saving output files
-include("simulationSettings/saveSettings.jl")
+includet("simulationSettings/saveSettings.jl")
 using .saveSettings: saveInRealUnits, saveData, saveDataFolderTag, addHeaders
 
 
 # 3) Non Laser Detuning/Pol Simulation Variables (B-field, beam-waist etc.)
-include("simulationSettings/generalSettingsOne.jl")
+includet("simulationSettings/generalSettingsOne.jl")
 using .generalSettingsOne: bGradReal, waistInMM, numTrialsPerValueSet, velDirRelToR, initDispDir
 
 
 # 4) User choices for what displacements and speeds
-include("simulationSettings/generalSettingsTwo.jl")
+includet("simulationSettings/generalSettingsTwo.jl")
 using .generalSettingsTwo: longSpeeds, displacementsInMM, userSpeeds, forceProfile, bFieldSetting
 
 
 # 5) User choices for laser parameters (detuning, polarization, etc) example laser values (these all work for SrF).
-include("simulationSettings/laserSettings.jl")
+includet("simulationSettings/laserSettings.jl")
 using .laserSettings: s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps
 
  
@@ -103,12 +108,12 @@ maskF2[8:12, 8:12] .= ones(5, 5)
 # 8) Iterate over user choices for displacements and speeds
 if saveData
     bString = bFieldSetting == "Static" ? "BFieldGauss" : "BGradGPerCM"
-    folderString = string(@__DIR__, "\\savedData\\", saveDataFolderTag, "bFieldSetting", bFieldSetting, bString, bGradReal, "Force", forceProfile, "NumLasers", length(s0), "Date", Dates.format(now(),"yyyymmdd_HHMMSS"))
+    folderString = string(@__DIR__, "/savedData/", saveDataFolderTag, "bFieldSetting", bFieldSetting, bString, bGradReal, "Force", forceProfile, "NumLasers", length(s0), "Date", Dates.format(now(),"yyyymmdd_HHMMSS"))
     mkpath(folderString)
 end
 
 for currDisp in displacementsInMM
-    for (k, currLongSpeed) in enuemrate(longSpeeds)
+    for (k, currLongSpeed) in enumerate(longSpeeds)
         for (j, currSpeed) in enumerate(userSpeeds)
             if abs(currSpeed) < 0.04
                 vRound = 0.002
@@ -225,7 +230,7 @@ for currDisp in displacementsInMM
         end
         
         if saveData
-            open(string(folderString, "\\forceVsSpeedDisplacement", currDisp, "MM", velDirRelToR, "Dir", ".dat"), "a") do io
+            open(string(folderString, "/forceVsSpeedDisplacement", currDisp, "MM", velDirRelToR, "Dir", ".dat"), "a") do io
                 if addHeaders && k==1
                     if forceProfile == "TwoD"
                         headers = ["Speed" "av" "av_std" "ar"  "ar_std"  "LongSpeed" "az" "az_std" "PF1Down" "PF0" "PF1Up" "PF2" "PExc"]
@@ -263,7 +268,7 @@ end # for displacements
 
 laserVarHeaders = ["s0" "energy" "polSign" "whichTransition" "polType" "sidebandFreqs" "sidebandAmps"]
 if saveData
-    open(string(folderString, "\\laserVariables.dat"), "w") do io
+    open(string(folderString, "/laserVariables.dat"), "w") do io
         writedlm(io, [laserVarHeaders ; hcat(s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps)])
     end
 end

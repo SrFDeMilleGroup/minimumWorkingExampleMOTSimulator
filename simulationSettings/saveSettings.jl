@@ -1,3 +1,7 @@
+# using Revise package in mainSimulationCode.jl to monitor and update the changes in this script, to reduce the need to restart the kernel when making changes
+# https://timholy.github.io/Revise.jl/stable/config/#Configuring-the-revise-mode
+__revise_mode__ = :eval 
+
 module saveSettings
 
 export saveInRealUnits, saveData, saveDataFolderTag, addHeaders

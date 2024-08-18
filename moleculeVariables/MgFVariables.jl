@@ -1,3 +1,13 @@
+# unit of energy: hbar * Gamma
+# unit of velocity: Gamma / k, where k is the wavevector
+# unit of time: 1 / Gamma
+# unit of length: 1 / k (= wavelength / 2pi)
+# unit of force: 1e-3 * hbar * Gamma * k (??)
+
+# using Revise package in mainSimulationCode.jl to monitor and update the changes in this script, to reduce the need to restart the kernel when making changes
+# https://timholy.github.io/Revise.jl/stable/config/#Configuring-the-revise-mode
+__revise_mode__ = :eval 
+
 const lamA=359.3e-9;#note: positions normalized to \tilde{x}=k_{SrF,X->A}x
 const lamB=268.9e-9;#note: this has 18 MHz linewidth.  Will try to add in different linewidths later, if possible.  
 const lamRepump = 368.7e-9;

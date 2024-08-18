@@ -1,18 +1,15 @@
-using DifferentialEquations
-#using Plots
-using BenchmarkTools
-using Octavian
-using LinearAlgebra
-#using Distributed
-#using WignerSymbols
-#using Coverage
-using DelimitedFiles
-using Statistics
-using Dates
+# using Revise package in mainSimulationCode.jl to monitor and update the changes in this script, to reduce the need to restart the kernel when making changes
+# https://timholy.github.io/Revise.jl/stable/config/#Configuring-the-revise-mode
+__revise_mode__ = :eval 
 
-struct Lasers{T1<:Vector{Float64},T2<:Vector{Int64},T3<:Vector{String},T4<:Vector{Matrix{Float64}}} #structure 'defining' a laser
-    s0::T1;#saturation intensity at laser center (single pass)
-    laserEnergy::T1;#energy of laser (note: zero energy defined to be energy of transition from |X\Sigma,F=1,J=1/2> to |F'=1>)
+using LinearAlgebra: mul!
+using Random: Random
+Random.seed!(123) # fix the random number seed for reproducibility
+
+
+struct Lasers{T1<:Vector{Float64},T2<:Vector{Int64},T3<:Vector{String},T4<:Vector{Matrix{Float64}}}
+    s0::T1 # saturation intensity at laser center (single pass)
+    laserEnergy::T1 # energy of laser (note: zero energy defined to be energy of transition from |X\Sigma,F=1,J=1/2> to |F'=1>)
     polSign::T2;#polarization sign (for configurations using \sigma+/- light.  Defines if x-axis, say, is +\sigma or -\sigma (and corresponding changes to other axes...))
     whichTransition::T3;#"XB", "XA", or "XARepump"
     polType::T3;#= polType can be "3D" (sig +/-, with z-axis (quadrupole coil axis) reversed wrt other axes), "2DSS" (sig +/- but lasers only in x,y direction.  if \sig+ along +x then \sig- along +y).  
