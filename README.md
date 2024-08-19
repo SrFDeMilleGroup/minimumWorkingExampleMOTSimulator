@@ -10,4 +10,6 @@ Follow the instructions [here](https://julialang.org/downloads/) to use terminal
 1. clarify in write about the molecule velocity direction 
 2. clarify about dragging molecule through laser field with constant v, random initial position and average, Hamiltonian period
 3. what we actually save: f dot v / |v|, etc
-4. version of Julia matters (1.10.4 vs 1.7.0)
+4. save all settings, save all numbers in one file, save in .csv
+5. analysis code
+6. extend to cluster

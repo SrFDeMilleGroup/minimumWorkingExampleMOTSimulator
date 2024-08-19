@@ -3,22 +3,26 @@
 __revise_mode__ = :eval 
 
 using LinearAlgebra: mul!
-using Random: Random
-Random.seed!(123) # fix the random number seed for reproducibility
+using Random: Xoshiro
+
+# Fix the random number generator seed for reproducibility
+# Don't use the default RNG, as it may be called in other background processes.
+myRNG = Xoshiro(123) 
 
 
-struct Lasers{T1<:Vector{Float64},T2<:Vector{Int64},T3<:Vector{String},T4<:Vector{Matrix{Float64}}}
-    s0::T1 # saturation intensity at laser center (single pass)
-    laserEnergy::T1 # energy of laser (note: zero energy defined to be energy of transition from |X\Sigma,F=1,J=1/2> to |F'=1>)
-    polSign::T2;#polarization sign (for configurations using \sigma+/- light.  Defines if x-axis, say, is +\sigma or -\sigma (and corresponding changes to other axes...))
-    whichTransition::T3;#"XB", "XA", or "XARepump"
-    polType::T3;#= polType can be "3D" (sig +/-, with z-axis (quadrupole coil axis) reversed wrt other axes), "2DSS" (sig +/- but lasers only in x,y direction.  if \sig+ along +x then \sig- along +y).  
-    "2DPar"(lasers in x,y direction both polarized along z).  "2DPerp" (x laser polarized along y, y polarized along z).  "Slower" (z laser linearly polarized along x) =#
-    sidebandFreqs::T1;#frequency at which sidebands are driven
-    sidebandAmps::T1;#phase modulation depth in radians
-    wavenumberRatios::T1;#ratio of k_{Laser} to k_{A} 
-    laserMasks::T4;#used in calculation of density matrix evolution.  Turns off coupling terms corresponding to, for example, X->B and X(v=1)->A for a laser with 'whichTransition'="XA"
+struct Lasers
+    s0::Vector{Float64} # saturation intensity at laser center (single pass)
+    laserEnergy::Vector{Float64} # energy of laser (note: zero energy defined to be energy of transition from |X\Sigma,F=1,J=1/2> to |F'=1>)
+    polSign::Vector{Int64} # polarization sign (for configurations using \sigma+/- light. Defines if x-axis, say, is +\sigma or -\sigma (and corresponding changes to other axes...))
+    whichTransition::Vector{String} # "XB", "XA", or "XARepump"
+    polType::Vector{String} # polType can be "3D" (sig +/-, with z-axis (quadrupole coil axis) reversed wrt other axes), "2DSS" (sig +/- but lasers only in x,y direction. if \sig+ along +x then \sig- along +y).  
+                            # "2DPar"(lasers in x,y direction both polarized along z). "2DPerp" (x laser polarized along y, y polarized along z). "Slower" (z laser linearly polarized along x)
+    sidebandFreqs::Vector{Float64} # frequency at which sidebands are driven
+    sidebandAmps::Vector{Float64} # phase modulation depth in radians
+    wavenumberRatios::Vector{Float64} # ratio of k_{Laser} to k_{A} 
+    laserMasks::Vector{Float64} # used in calculation of density matrix evolution. Turns off coupling terms corresponding to, for example, X->B and X(v=1)->A for a laser with 'whichTransition'="XA"
 end
+
 
 function preInitializer(numLasers,numZeemanStatesGround,numZeemanStatesTotal)#initializes a bunch of stuff used in the OBE solver.  Julia likes things pre-initialized if possible
 
@@ -81,13 +85,13 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
 
     if forceProfile=="TwoD"
         #randomize position direction
-        randPhisPos = rand(numTrialsPerSpeed, 1) * 2 * pi
+        randPhisPos = rand(myRNG, numTrialsPerSpeed, 1) * 2 * pi
         randRxs = cos.(randPhisPos) .* currDisp .* 1e-3 .* kA
         randRys = sin.(randPhisPos) .* currDisp .* 1e-3 .* kA
-        randRzs = rand(numTrialsPerSpeed, 1) * 2 * pi
+        randRzs = rand(myRNG, numTrialsPerSpeed, 1) * 2 * pi
 
         if velDirRelToR == "Random" #randomize phi
-            randPhisVels = rand(numTrialsPerSpeed, 1) * 2 * pi
+            randPhisVels = rand(myRNG, numTrialsPerSpeed, 1) * 2 * pi
         elseif velDirRelToR == "Same"
             randPhisVels = randPhisPos;
         elseif velDirRelToR == "Orthogonal"
@@ -102,26 +106,26 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
         randVzs = round.(currSpeed .* cos.(randPhisVels) ./ vRound) .* 0 .+ longSpeed#
     else #if 3D
         #random position direction
-        randX = randn(numTrialsPerSpeed, 1);
-        randY = randn(numTrialsPerSpeed, 1);
-        randZ = randn(numTrialsPerSpeed, 1);
+        randX = randn(myRNG, numTrialsPerSpeed, 1);
+        randY = randn(myRNG, numTrialsPerSpeed, 1);
+        randZ = randn(myRNG, numTrialsPerSpeed, 1);
         normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2);
         randRxs = randX ./ normTerms .* currDisp .* 1e-3 .* kA;
         randRys = randY ./ normTerms .* currDisp .* 1e-3 .* kA;
         randRzs = randZ ./ normTerms .* currDisp .* 1e-3 .* kA;
         # if initDispDir=="XY", force position to be along (x+y)/sqrt(2) (e.g., entering from slower); if initDispDir=="Z", then it forces along Z
         if initDispDir == "XY"
-            randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(numTrialsPerSpeed, 1);
-            randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(numTrialsPerSpeed, 1);
-            randRzs = 2 .* pi .* randn(numTrialsPerSpeed, 1);
+            randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(myRNG, numTrialsPerSpeed, 1);
+            randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(myRNG, numTrialsPerSpeed, 1);
+            randRzs = 2 .* pi .* randn(myRNG, numTrialsPerSpeed, 1);
             randX = randRxs ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             randY = randRys ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             randZ = randRzs ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2);
         elseif initDispDir == "Z"
-            randRxs = 2 .* pi .* randn(numTrialsPerSpeed, 1);
-            randRys = 2 .* pi .* randn(numTrialsPerSpeed, 1);
-            randRzs = currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(numTrialsPerSpeed, 1);
+            randRxs = 2 .* pi .* randn(myRNG, numTrialsPerSpeed, 1);
+            randRys = 2 .* pi .* randn(myRNG, numTrialsPerSpeed, 1);
+            randRzs = currDisp .* 1e-3 .* kA .+ 2 .* pi .* randn(myRNG, numTrialsPerSpeed, 1);
             randX = randRxs ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             randY = randRys ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
             randZ = randRzs ./ sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2);
@@ -130,9 +134,9 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
             throw(ArgumentError(string("invalid choice of initDispDir, ", initDispDir, ". Valid options are XY or Z")))
         end
         if velDirRelToR == "Random" #random velocity direction as wel
-            randX = randn(numTrialsPerSpeed, 1);#re-roll
-            randY = randn(numTrialsPerSpeed, 1);
-            randZ = randn(numTrialsPerSpeed, 1);
+            randX = randn(myRNG, numTrialsPerSpeed, 1);#re-roll
+            randY = randn(myRNG, numTrialsPerSpeed, 1);
+            randZ = randn(myRNG, numTrialsPerSpeed, 1);
             normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2);
             randVxs = randX ./ normTerms .* currSpeed;
             randVys = randY ./ normTerms .* currSpeed;
@@ -142,9 +146,9 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
             randVys = randY ./ normTerms .* currSpeed;
             randVzs = randZ ./ normTerms .* currSpeed;
         elseif velDirRelToR == "Orthogonal"
-	        randX2 = randn(numTrialsPerSpeed,1);
-	        randY2 = randn(numTrialsPerSpeed,1);
-	        randZ2 = randn(numTrialsPerSpeed,1);
+	        randX2 = randn(myRNG, numTrialsPerSpeed,1);
+	        randY2 = randn(myRNG, numTrialsPerSpeed,1);
+	        randZ2 = randn(myRNG, numTrialsPerSpeed,1);
             for i=1:length(randX2)
                 (randX2[i],randY2[i],randZ2[i]) =[randX2[i],randY2[i],randZ2[i]]-dot([randX[i],randY[i],randZ[i]],[randX2[i],randY2[i],randZ2[i]])./dot([randX[i],randY[i],randZ[i]],[randX[i],randY[i],randZ[i]]) .* [randX[i],randY[i],randZ[i]];
             end
@@ -177,13 +181,13 @@ function generateRandPosAndVel(forceProfile,numTrialsPerSpeed,velDirRelToR,currD
     
     for i=1:length(randVzs)#velocity along any dimension cannot be zero (particle should have x,y,z all change throughout OBE evolution to ensure periodicity)
         if randVxs[i]==0
-            randVxs[i] = vRound .* sign.(randn(Float64));
+            randVxs[i] = vRound .* sign.(randn(myRNG, Float64));
         end
         if randVys[i]==0
-            randVys[i] = vRound .* sign.(randn(Float64));
+            randVys[i] = vRound .* sign.(randn(myRNG, Float64));
         end
         if randVzs[i]==0
-            randVzs[i] = vRound .* sign.(randn(Float64));
+            randVzs[i] = vRound .* sign.(randn(myRNG, Float64));
         end
     end
     

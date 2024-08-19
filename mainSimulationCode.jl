@@ -17,7 +17,7 @@ using Trapz: trapz
 
 
 # 1) Go to directory and load external variables + functions
-cd(@__DIR__); # moves julia terminal to directory where this file is.  This directory should have auxFunctions+SrF(or whatever)Variables files as well
+cd(@__DIR__) # moves julia terminal to directory where this file is.  This directory should have auxFunctions+SrF(or whatever)Variables files as well
 includet("moleculeVariables/SrFVariables.jl") # change this to whatever molecule you care about
 includet("auxFunctions/auxFunctions.jl") # supplementary functions
 
@@ -100,8 +100,9 @@ maskF1Up[5:7, 5:7] .= ones(3, 3)
 maskF2 = zeros(numZeemanStatesTotal, numZeemanStatesTotal)
 maskF2[8:12, 8:12] .= ones(5, 5)
 
-# NOTE, when executing in VSCode using alt-enter, code will stop here. To actually run simulation, hit alt-enter again with cursor below the double #
-##
+# NOTE, when executing in VSCode using alt-enter (Windows) or opt-enter (MacOS), code will stop here if the line below the next line ONLY contains two #'s. 
+# In this case, hit alt-enter or opt-enter again with cursor below the double #.
+# ##
 
 
 # OK, that's the setup, now for actually obtaining some acceleration curves via our OBE solver (note: the bulk of the work is 'under the hood' in auxFunctions)
