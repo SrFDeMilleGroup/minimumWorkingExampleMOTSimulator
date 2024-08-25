@@ -5,7 +5,6 @@
 # unit of force: 1e-3 * hbar * Gamma * k (??)
 
 
-using Revise: includet # monitor and update the changes in scripts imported by includet, to reduce the need to restart when making changes to code
 using DifferentialEquations: ODEProblem, EnsembleProblem, solve, remake, Tsit5, EnsembleThreads
 using BenchmarkTools: @time
 using LinearAlgebra: tr, I
@@ -18,42 +17,46 @@ using Trapz: trapz
 
 # 1) Go to directory and load external variables + functions
 cd(@__DIR__) # moves julia terminal to directory where this file is.  This directory should have auxFunctions+SrF(or whatever)Variables files as well
-includet("moleculeVariables/SrFVariables.jl") # change this to whatever molecule you care about
-includet("auxFunctions/auxFunctions.jl") # supplementary functions
+
+include("simulationSettings/moleculeVariables.jl")
+using .moleculeVariables: SrF, CaF, BaF, MgF, CaOH, SrOH, Molecule
+mol = SrF
+
+include("auxFunctions/auxFunctions.jl") # supplementary functions
 
 
 # 2) User choices with respect to saving output files
-includet("simulationSettings/saveSettings.jl")
+include("simulationSettings/saveSettings.jl")
 using .saveSettings: saveInRealUnits, saveData, saveDataFolderTag, addHeaders
 
 
 # 3) Non Laser Detuning/Pol Simulation Variables (B-field, beam-waist etc.)
-includet("simulationSettings/generalSettingsOne.jl")
+include("simulationSettings/generalSettingsOne.jl")
 using .generalSettingsOne: bGradReal, waistInMM, numTrialsPerValueSet, velDirRelToR, initDispDir
 
 
 # 4) User choices for what displacements and speeds
-includet("simulationSettings/generalSettingsTwo.jl")
+include("simulationSettings/generalSettingsTwo.jl")
 using .generalSettingsTwo: longSpeeds, displacementsInMM, userSpeeds, forceProfile, bFieldSetting
 
 
 # 5) User choices for laser parameters (detuning, polarization, etc) example laser values (these all work for SrF).
-includet("simulationSettings/laserSettings.jl")
+include("simulationSettings/laserSettings.jl")
 using .laserSettings: s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps
 
  
 #6) Stuff for setting up simulation based on user's choices
 # stuff needed to determine minimum number of states, and which coupling terms to use, and which lasers actually 'use' a given coupling term (see 'laserMasks')
-(couplingMatrices, bCouplingMatrices, stateEnergyMatrix, laserMasks, wavenumberRatios, numZeemanStatesGround, numZeemanStatesExcited) = createCouplingTermsandLaserMasks(whichTransition)
+(couplingMatrices, bCouplingMatrices, stateEnergyMatrix, laserMasks, wavenumberRatios, numZeemanStatesGround, numZeemanStatesExcited) = createCouplingTermsandLaserMasks(whichTransition, mol)
 numZeemanStatesTotal = numZeemanStatesGround + numZeemanStatesExcited
 
 # define lasers structure, see auxFunctions
 lasers = Lasers(s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps, wavenumberRatios, laserMasks)
 
 # set bGrad (units Gauss * wavevector) (or make "bGrad" static, in units Gauss)
-bGrad = bFieldSetting == "Static" ? bGradReal : (1 / kA * 1e2) * bGradReal
+bGrad = bFieldSetting == "Static" ? bGradReal : (1 / mol.kA * 1e2) * bGradReal
 
-waist = waistInMM * 1e-3 * kA # convert to unit of 1/k, waist only used in 3D MOT code
+waist = waistInMM * 1e-3 * mol.kA # convert to unit of 1/k, waist only used in 3D MOT code
 
 rInit = [0., 0., 0.] # placehold not used
 vInit = [0., 0., 0.] # placehold not used
@@ -61,7 +64,7 @@ vInit = [0., 0., 0.] # placehold not used
 # in retrospect p is not the best choice for the variable name but it's the julia house style...maybe replace later. (actually you can't. Julia forces ODEProblem to have a variable 'p')
 pPreInitialized = preInitializer(length(s0), numZeemanStatesGround, numZeemanStatesTotal)
 
-p = [rInit, vInit, stateEnergyMatrix, lasers, waist, bGrad * normalizedBohrMag,
+p = [rInit, vInit, stateEnergyMatrix, lasers, waist, bGrad * mol.normalizedBohrMag,
     couplingMatrices[1], couplingMatrices[2], couplingMatrices[3], bCouplingMatrices[1], bCouplingMatrices[2], bCouplingMatrices[3]]
 append!(p, pPreInitialized)
 push!(p, bFieldSetting)
@@ -127,7 +130,7 @@ for currDisp in displacementsInMM
             end
 
             # 8A) Set up and solve OBEs
-            (randRxs, randRys, randRzs, randVxs, randVys, randVzs) = generateRandPosAndVel(forceProfile, numTrialsPerValueSet, velDirRelToR, currDisp, currSpeed, vRound, currLongSpeed, initDispDir)
+            (randRxs, randRys, randRzs, randVxs, randVys, randVzs) = generateRandPosAndVel(forceProfile, numTrialsPerValueSet, velDirRelToR, currDisp, currSpeed, vRound, currLongSpeed, initDispDir, mol)
             tForSteadyState = maximum([10 / currSpeed, 270]) # obtained by trial and error. Could potentially be handled more rigrorously (solve ode in steps of 'period length' until solution 'converges')
             hamiltonianPeriod = 2 * pi / vRound
             saveTimes = tForSteadyState : 0.1 : (tForSteadyState + hamiltonianPeriod) # times to record obe solution for force integration
@@ -219,12 +222,12 @@ for currDisp in displacementsInMM
         pF2VsSpeedAvg = dropdims(pF2VsSpeedAvg, dims=(2))
 
         # 8D) convert to real units if applicable and save data
-        (forceVsSpeedAvgSaveVals, forceVsSpeedUncSaveVals, forceVsPosAvgSaveVals, forceVsPosUncSaveVals) = (forceVsSpeedAvg, forceVsSpeedUnc, forceVsPosAvg, forceVsPosUnc) .* (saveInRealUnits ? accelFactor : 1)
-        userSpeedsSaveVals = userSpeeds .* (saveInRealUnits ? velFactor : 1)
+        (forceVsSpeedAvgSaveVals, forceVsSpeedUncSaveVals, forceVsPosAvgSaveVals, forceVsPosUncSaveVals) = (forceVsSpeedAvg, forceVsSpeedUnc, forceVsPosAvg, forceVsPosUnc) .* (saveInRealUnits ? mol.accelFactor : 1)
+        userSpeedsSaveVals = userSpeeds .* (saveInRealUnits ? mol.velFactor : 1)
         
         if forceProfile == "TwoD"
-            (forceVsLongAvgSaveVals,forceVsLongUncSaveVals) = (forceVsLongAvg,forceVsLongUnc) .* (saveInRealUnits ? accelFactor : 1)
-            currLongSpeedSaveVals = currLongSpeed .* (saveInRealUnits ? velFactor : 1)
+            (forceVsLongAvgSaveVals, forceVsLongUncSaveVals) = (forceVsLongAvg,forceVsLongUnc) .* (saveInRealUnits ? mol.accelFactor : 1)
+            currLongSpeedSaveVals = currLongSpeed .* (saveInRealUnits ? mol.velFactor : 1)
         elseif forceProfile == "ThreeD"
         else
             error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")

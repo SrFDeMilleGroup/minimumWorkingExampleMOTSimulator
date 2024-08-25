@@ -13,6 +13,8 @@ Follow the instructions [here](https://julialang.org/downloads/) to use terminal
 4. save all settings, save all numbers in one file, save units, save in .csv
 5. analysis code
 6. extend to cluster
-7. longitudinal static B field
-8. using tuple for p initialized
-9. molecule constants as struct and module
+7. parallelize
+8. longitudinal static B field
+9. using tuple for p initialized
+10. molecule constants as struct and module
+11. frequency round to 0.1

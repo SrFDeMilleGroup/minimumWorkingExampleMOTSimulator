@@ -1,9 +1,8 @@
-# using Revise package in mainSimulationCode.jl to monitor and update the changes in this script, to reduce the need to restart the kernel when making changes
-# https://timholy.github.io/Revise.jl/stable/config/#Configuring-the-revise-mode
-__revise_mode__ = :eval 
-
 using LinearAlgebra: mul!
 using Random: Xoshiro
+
+# include("../simulationSettings/moleculeVariables.jl")
+# using .moleculeVariables: Molecule
 
 # Fix the random number generator seed for reproducibility
 # Don't use the default RNG, as it may be called in other background processes.
@@ -76,7 +75,7 @@ function preInitializer(numLasers, numZeemanStatesGround, numZeemanStatesTotal)
 end
 
 
-function generateRandPosAndVel(forceProfile, numTrialsPerSpeed, velDirRelToR, currDisp, currSpeed, vRound, longSpeed, initDispDir)
+function generateRandPosAndVel(forceProfile, numTrialsPerSpeed, velDirRelToR, currDisp, currSpeed, vRound, longSpeed, initDispDir, mol::Molecule)
     # Function generates a set of random positions and 'pseudo'-random velocities (direction determined by 'velDirRelToR' + whether 'force profile' is 2D or 3D.)
     # if forceProfile is TwoD: z position is assumed to not matter, z velocity is fixed to longSpeed, and direction of velocity relative to random choice of \phi where x=disp*(cos(\phi)), etc. determined by velDirRelToR
     # if forceProfile is ThreeD: longSpeed isn't used, and direction of velocity chosen relative to random x,y,z direction of position is determined by velDirRelToR
@@ -84,8 +83,8 @@ function generateRandPosAndVel(forceProfile, numTrialsPerSpeed, velDirRelToR, cu
     if forceProfile == "TwoD"
         # randomize position direction
         randPhisPos = rand(myRNG, numTrialsPerSpeed) * 2 * pi
-        randRxs = cos.(randPhisPos) .* currDisp .* 1e-3 .* kA
-        randRys = sin.(randPhisPos) .* currDisp .* 1e-3 .* kA
+        randRxs = cos.(randPhisPos) .* currDisp .* 1e-3 .* mol.kA
+        randRys = sin.(randPhisPos) .* currDisp .* 1e-3 .* mol.kA
         randRzs = rand(myRNG, numTrialsPerSpeed) * 2 * pi
 
         if velDirRelToR == "Random" #randomize phi
@@ -106,13 +105,13 @@ function generateRandPosAndVel(forceProfile, numTrialsPerSpeed, velDirRelToR, cu
     elseif forceProfile == "ThreeD"
         # if initDispDir=="XY", force position to be along (x+y)/sqrt(2) (e.g., entering from slower); if initDispDir=="Z", then it forces along Z
         if initDispDir == "XY"
-            randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-            randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+            randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+            randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
             randRzs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)            
         elseif initDispDir == "Z"
             randRxs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
             randRys = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-            randRzs = currDisp .* 1e-3 .* kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+            randRzs = currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
         else
             throw(ArgumentError(string("Invalid choice of initDispDir, ", initDispDir, ". Valid options are XY or Z.")))
         end
@@ -189,7 +188,7 @@ function generateRandPosAndVel(forceProfile, numTrialsPerSpeed, velDirRelToR, cu
 end
 
 
-function createCouplingTermsandLaserMasks(whichTransition)
+function createCouplingTermsandLaserMasks(whichTransition, mol::Molecule)
     # This function does a number of things
 
     # 1) determine how many ground and excited states are needed (12 ground if no lasers are "XARepumps", 24 if there are repumps. 4 excited if only one of "A" or "B" are used, 8 if both are)
@@ -226,7 +225,7 @@ function createCouplingTermsandLaserMasks(whichTransition)
 
     #2)
     # fill(groundStateEnergy, numZeemanStatesEachHyperfineLevel)
-    stateEnergiesColumnFormat = [fill(stateEnergiesGround[1], 3); fill(stateEnergiesGround[2], 1); fill(stateEnergiesGround[3], 3); fill(stateEnergiesGround[4], 5)]
+    stateEnergiesColumnFormat = [fill(mol.stateEnergiesGround[1], 3); fill(mol.stateEnergiesGround[2], 1); fill(mol.stateEnergiesGround[3], 3); fill(mol.stateEnergiesGround[4], 5)]
     if repump == 1
         # NOTE this assumes hyperfine splitting is the same in v=1 repump...not quite right but close enough
         stateEnergiesColumnFormat = vcat(stateEnergiesColumnFormat, stateEnergiesColumnFormat)
@@ -235,28 +234,27 @@ function createCouplingTermsandLaserMasks(whichTransition)
 
     stateEnergyMatrix = repeat(stateEnergiesColumnFormat, 1, numZeemanStatesTotal)
     if XToB == 1 || bichrom == 1
-        stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- stateEnergiesExcited[2] # handles excited state hyperfine splitting of |B\Sigma,F=0> level. 
+        stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- mol.stateEnergiesExcited[2] # handles excited state hyperfine splitting of |B\Sigma,F=0> level. 
         if bichrom == 1
-            stateEnergyMatrix[1:numZeemanStatesGround, end-4] = stateEnergyMatrix[1:numZeemanStatesGround, end-4] .- stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
+            stateEnergyMatrix[1:numZeemanStatesGround, end-4] = stateEnergyMatrix[1:numZeemanStatesGround, end-4] .- mol.stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
         end
     else
-        stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
+        stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- mol.stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
     end
 
     #3+4)
     laserMasks = [zeros(numZeemanStatesTotal, numZeemanStatesTotal) for i=1:length(whichTransition)]
     wavenumberRatios = Vector{Float64}(undef, length(whichTransition))
-    for i = 1:length(whichTransition)
-        currTransition = whichTransition[i]
+    for (i, currTransition) in enumerate(whichTransition)
         if currTransition == "XA"
             laserMasks[i][1:12, (13+12*repump):(16+12*repump)] .= 1
             wavenumberRatios[i] = 1.0
         elseif currTransition == "XB"
             laserMasks[i][1:12, (13+12*repump+4*bichrom):(16+12*repump+4*bichrom)] .= 1
-            wavenumberRatios[i] = kB / kA
+            wavenumberRatios[i] = mol.kB / mol.kA
         elseif currTransition == "XARepump"
             laserMasks[i][13:24, 25:28] .= 1
-            wavenumberRatios[i] = kRepump / kA
+            wavenumberRatios[i] = mol.kRepump / mol.kA
         else
             throw(ArgumentError(string("Invalid choice of whichTransition, ", currTransition, ". Valid options are XA, XB, XARepump.")))
         end
@@ -265,16 +263,16 @@ function createCouplingTermsandLaserMasks(whichTransition)
     #5)
     couplingMatrices = Matrix[zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal)]
 
-    makeCouplingMatrices!(couplingMatrices, a, b, XToB,repump,bichrom, v1BranchingRatioA, v1BranchingRatioB)
+    makeCouplingMatrices!(couplingMatrices, XToB, repump, bichrom, mol)
 
     bCouplingMatrices = Matrix[zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal)]
 
-    makeBCouplingMatrices!(bCouplingMatrices, gs, XToB,repump,bichrom)
+    makeBCouplingMatrices!(bCouplingMatrices, XToB, repump, bichrom, mol)
 
     return couplingMatrices, bCouplingMatrices, stateEnergyMatrix, laserMasks, wavenumberRatios, numZeemanStatesGround, numZeemanStatesExcited
 end
 
-function makeCouplingMatrices!(couplingMatrices, a, b, XToB, repump, bichrom, v1BranchingRatioA, v1BranchingRatioB)
+function makeCouplingMatrices!(couplingMatrices, XToB, repump, bichrom, mol::Molecule)
     # makes C_{i,j}[k] matrices.  What these look like depend on what ground/excited states are included
     # Choice 1) bichrom means that both A and B are 'spoken' to, and thus there are 8 excited states.
     # Choice 2) XToB=0 is true if no lasers 'talk' to B.  Thus, all 4 excited states are A states
@@ -285,166 +283,169 @@ function makeCouplingMatrices!(couplingMatrices, a, b, XToB, repump, bichrom, v1
     # is mixing between 'pure' |F=1,J=1/2> and |F=1,J=3/2> that can be parameterized by a,b where |F=1,J~3/2> = a|F=1,J=3/2>+b|F=1,J=1/2> and |F=1,J~1/2> = -b|F=1,J=3/2>+a|F=1,J=1/2>
     # See Appendix A in writeup
 
+    a = mol.jMixingRatioA
+    b = mol.jMixingRatioB
+
     if bichrom == 1 
         # note: 12*repump term in second index forces 'excited' index to start at appropriate place, e.g. 13 for no repump, 25 if there is repump
-        couplingMatrices[1][1, 14+12*repump] = -sqrt(2)/3*a - b/6
-        couplingMatrices[1][1, 16+12*repump] = -sqrt(2)/3*a + b/3
-        couplingMatrices[1][2, 15+12*repump] = -sqrt(2)/3*a - b/6
-        couplingMatrices[1][4, 15+12*repump] = sqrt(2)/3
-        couplingMatrices[1][5, 14+12*repump] = a/6 - sqrt(2)/3*b
-        couplingMatrices[1][5, 16+12*repump] = -a/3 - sqrt(2)/3*b
-        couplingMatrices[1][6, 15+12*repump] = a/6 - sqrt(2)/3*b
-        couplingMatrices[1][8, 13+12*repump] = -1/sqrt(6)
-        couplingMatrices[1][9, 14+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[1][10, 15+12*repump] = -1/6
-        couplingMatrices[1][1, 14+4+12*repump] = -a/3 + b/3/sqrt(2)
-        couplingMatrices[1][1, 16+4+12*repump] = -a/3 - sqrt(2)*b/3
-        couplingMatrices[1][2, 15+4+12*repump] = -a/3 + b/3/sqrt(2)
-        couplingMatrices[1][4, 15+4+12*repump] = 1/3
-        couplingMatrices[1][5, 14+4+12*repump] = -a/3/sqrt(2) - b/3
-        couplingMatrices[1][5, 16+4+12*repump] = sqrt(2)*a/3 - b/3
-        couplingMatrices[1][6, 15+4+12*repump] = -a/3/sqrt(2) - b/3
-        couplingMatrices[1][8, 13+4+12*repump] = 1/sqrt(3)
-        couplingMatrices[1][9, 14+4+12*repump] = 1/sqrt(6)
-        couplingMatrices[1][10, 15+4+12*repump] = 1/3/sqrt(2)
+        couplingMatrices[1][1, 14+12*repump] = -sqrt(2) / 3 * a - b / 6
+        couplingMatrices[1][1, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+        couplingMatrices[1][2, 15+12*repump] = -sqrt(2) / 3 * a - b / 6
+        couplingMatrices[1][4, 15+12*repump] = sqrt(2) / 3
+        couplingMatrices[1][5, 14+12*repump] = a / 6 - sqrt(2) / 3 * b
+        couplingMatrices[1][5, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+        couplingMatrices[1][6, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+        couplingMatrices[1][8, 13+12*repump] = -1 / sqrt(6)
+        couplingMatrices[1][9, 14+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[1][10, 15+12*repump] = -1 / 6
+        couplingMatrices[1][1, 14+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
+        couplingMatrices[1][1, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
+        couplingMatrices[1][2, 15+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
+        couplingMatrices[1][4, 15+4+12*repump] = 1 / 3
+        couplingMatrices[1][5, 14+4+12*repump] = -a / 3 / sqrt(2) - b / 3
+        couplingMatrices[1][5, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
+        couplingMatrices[1][6, 15+4+12*repump] = -a / 3 / sqrt(2) - b / 3
+        couplingMatrices[1][8, 13+4+12*repump] = 1 / sqrt(3)
+        couplingMatrices[1][9, 14+4+12*repump] = 1 / sqrt(6)
+        couplingMatrices[1][10, 15+4+12*repump] = 1 / 3 / sqrt(2)
 
-        couplingMatrices[2][1, 13+12*repump] = sqrt(2)/3*a + 1/6*b
-        couplingMatrices[2][2, 16+12*repump] = -sqrt(2)/3*a + b/3
-        couplingMatrices[2][3, 15+12*repump] = -sqrt(2)/3*a - 1/6*b
-        couplingMatrices[2][4, 14+12*repump] = -sqrt(2)/3
-        couplingMatrices[2][5, 13+12*repump] = -a/6 + sqrt(2)/3*b
-        couplingMatrices[2][6, 16+12*repump] = -a/3 - sqrt(2)/3*b
-        couplingMatrices[2][7, 15+12*repump] = a/6 - sqrt(2)/3*b
-        couplingMatrices[2][9, 13+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[2][10, 14+12*repump] = -1/3
-        couplingMatrices[2][11, 15+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[2][1, 13+4+12*repump] = a/3 - b/3/sqrt(2)
-        couplingMatrices[2][2, 16+4+12*repump] = -a/3 - sqrt(2)*b/3
-        couplingMatrices[2][3, 15+4+12*repump] = -a/3 + b/3/sqrt(2)
-        couplingMatrices[2][4, 14+4+12*repump] = -1/3
-        couplingMatrices[2][5, 13+4+12*repump] = a/3/sqrt(2) + b/3
-        couplingMatrices[2][6, 16+4+12*repump] = sqrt(2)*a/3 - b/3
-        couplingMatrices[2][7, 15+4+12*repump] = -a/3/sqrt(2) - b/3
-        couplingMatrices[2][9, 13+4+12*repump] = 1/sqrt(6)
-        couplingMatrices[2][10, 14+4+12*repump] = sqrt(2)/3
-        couplingMatrices[2][11, 15+4+12*repump] = 1/sqrt(6)
+        couplingMatrices[2][1, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+        couplingMatrices[2][2, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+        couplingMatrices[2][3, 15+12*repump] = -sqrt(2) / 3 * a - 1 / 6 * b
+        couplingMatrices[2][4, 14+12*repump] = -sqrt(2) / 3
+        couplingMatrices[2][5, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+        couplingMatrices[2][6, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+        couplingMatrices[2][7, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+        couplingMatrices[2][9, 13+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[2][10, 14+12*repump] = -1 / 3
+        couplingMatrices[2][11, 15+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[2][1, 13+4+12*repump] = a / 3 - b / 3 / sqrt(2)
+        couplingMatrices[2][2, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
+        couplingMatrices[2][3, 15+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
+        couplingMatrices[2][4, 14+4+12*repump] = -1 / 3
+        couplingMatrices[2][5, 13+4+12*repump] = a / 3 / sqrt(2) + b / 3
+        couplingMatrices[2][6, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
+        couplingMatrices[2][7, 15+4+12*repump] = -a / 3 / sqrt(2) - b / 3
+        couplingMatrices[2][9, 13+4+12*repump] = 1 / sqrt(6)
+        couplingMatrices[2][10, 14+4+12*repump] = sqrt(2) / 3
+        couplingMatrices[2][11, 15+4+12*repump] = 1 / sqrt(6)
 
-        couplingMatrices[3][2, 13+12*repump] = sqrt(2)/3*a + 1/6*b
-        couplingMatrices[3][3, 14+12*repump] = sqrt(2)/3*a + 1/6*b
-        couplingMatrices[3][3, 16+12*repump] = -sqrt(2)/3*a + b/3
-        couplingMatrices[3][4, 13+12*repump] = sqrt(2)/3
-        couplingMatrices[3][6, 13+12*repump] =  -a/6 + sqrt(2)/3*b
-        couplingMatrices[3][7, 14+12*repump] = -a/6 + sqrt(2)/3*b
-        couplingMatrices[3][7, 16+12*repump] = -a/3 - sqrt(2)/3*b
-        couplingMatrices[3][10, 13+12*repump] = -1/6
-        couplingMatrices[3][11, 14+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[3][12, 15+12*repump] = -1/sqrt(6)
-        couplingMatrices[3][2, 13+4+12*repump] = a/3 - b/3/sqrt(2)
-        couplingMatrices[3][3, 14+4+12*repump] = a/3 - b/3/sqrt(2)
-        couplingMatrices[3][3, 16+4+12*repump] = -a/3 - sqrt(2)*b/3
-        couplingMatrices[3][4, 13+4+12*repump] = 1/3
-        couplingMatrices[3][6, 13+4+12*repump] =  a/3/sqrt(2) + b/3
-        couplingMatrices[3][7, 14+4+12*repump] = a/3/sqrt(2) + b/3
-        couplingMatrices[3][7, 16+4+12*repump] =  sqrt(2)*a/3 - b/3
-        couplingMatrices[3][10, 13+4+12*repump] = 1/3/sqrt(2)
-        couplingMatrices[3][11, 14+4+12*repump] = 1/sqrt(6)
-        couplingMatrices[3][12, 15+4+12*repump] = 1/sqrt(3)
+        couplingMatrices[3][2, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+        couplingMatrices[3][3, 14+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+        couplingMatrices[3][3, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+        couplingMatrices[3][4, 13+12*repump] = sqrt(2) / 3
+        couplingMatrices[3][6, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+        couplingMatrices[3][7, 14+12*repump] = -a / 6 + sqrt(2) / 3 * b
+        couplingMatrices[3][7, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+        couplingMatrices[3][10, 13+12*repump] = -1 / 6
+        couplingMatrices[3][11, 14+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[3][12, 15+12*repump] = -1 / sqrt(6)
+        couplingMatrices[3][2, 13+4+12*repump] = a / 3 - b / 3 / sqrt(2)
+        couplingMatrices[3][3, 14+4+12*repump] = a / 3 - b / 3 / sqrt(2)
+        couplingMatrices[3][3, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
+        couplingMatrices[3][4, 13+4+12*repump] = 1 / 3
+        couplingMatrices[3][6, 13+4+12*repump] = a / 3 / sqrt(2) + b / 3
+        couplingMatrices[3][7, 14+4+12*repump] = a / 3 / sqrt(2) + b / 3
+        couplingMatrices[3][7, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
+        couplingMatrices[3][10, 13+4+12*repump] = 1 / 3 / sqrt(2)
+        couplingMatrices[3][11, 14+4+12*repump] = 1 / sqrt(6)
+        couplingMatrices[3][12, 15+4+12*repump] = 1 / sqrt(3)
 
         if repump == 1
-            couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(v1BranchingRatioA)
-            couplingMatrices[1][13:24, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(v1BranchingRatioB)
-            couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(v1BranchingRatioA)
-            couplingMatrices[2][13:24, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(v1BranchingRatioB)
-            couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(v1BranchingRatioA)
-            couplingMatrices[3][13:24, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(v1BranchingRatioB)
+            couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+            couplingMatrices[1][13:24, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
+            couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+            couplingMatrices[2][13:24, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
+            couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+            couplingMatrices[3][13:24, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
 
-            couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-v1BranchingRatioA)
-            couplingMatrices[1][1:12, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(1-v1BranchingRatioB)
-            couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-v1BranchingRatioA)
-            couplingMatrices[2][1:12, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(1-v1BranchingRatioB)
-            couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-v1BranchingRatioA)
-            couplingMatrices[3][1:12, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(1-v1BranchingRatioB)
+            couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+            couplingMatrices[1][1:12, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
+            couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+            couplingMatrices[2][1:12, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
+            couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+            couplingMatrices[3][1:12, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
         end
 
     elseif XToB == 0 
         # excited states are all "A" states
-        couplingMatrices[1][1, 14+12*repump] = -sqrt(2)/3*a - b/6
-        couplingMatrices[1][1, 16+12*repump] = -sqrt(2)/3*a + b/3
-        couplingMatrices[1][2, 15+12*repump] = -sqrt(2)/3*a - b/6
-        couplingMatrices[1][4, 15+12*repump] = sqrt(2)/3
-        couplingMatrices[1][5, 14+12*repump] = a/6 - sqrt(2)/3*b
-        couplingMatrices[1][5, 16+12*repump] = -a/3 - sqrt(2)/3*b
-        couplingMatrices[1][6, 15+12*repump] = a/6 - sqrt(2)/3*b
-        couplingMatrices[1][8, 13+12*repump] = -1/sqrt(6)
-        couplingMatrices[1][9, 14+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[1][10, 15+12*repump] = -1/6
+        couplingMatrices[1][1, 14+12*repump] = -sqrt(2) / 3 * a - b / 6
+        couplingMatrices[1][1, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+        couplingMatrices[1][2, 15+12*repump] = -sqrt(2) / 3 * a - b / 6
+        couplingMatrices[1][4, 15+12*repump] = sqrt(2) / 3
+        couplingMatrices[1][5, 14+12*repump] = a / 6 - sqrt(2) / 3 * b
+        couplingMatrices[1][5, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+        couplingMatrices[1][6, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+        couplingMatrices[1][8, 13+12*repump] = -1 / sqrt(6)
+        couplingMatrices[1][9, 14+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[1][10, 15+12*repump] = -1 / 6
         
-        couplingMatrices[2][1, 13+12*repump] = sqrt(2)/3*a + 1/6*b
-        couplingMatrices[2][2, 16+12*repump] = -sqrt(2)/3*a + b/3
-        couplingMatrices[2][3, 15+12*repump] = -sqrt(2)/3*a - 1/6*b
-        couplingMatrices[2][4, 14+12*repump] = -sqrt(2)/3
-        couplingMatrices[2][5, 13+12*repump] = -a/6 + sqrt(2)/3*b
-        couplingMatrices[2][6, 16+12*repump] = -a/3 - sqrt(2)/3*b
-        couplingMatrices[2][7, 15+12*repump] = a/6 - sqrt(2)/3*b
-        couplingMatrices[2][9, 13+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[2][10, 14+12*repump] = -1/3
-        couplingMatrices[2][11, 15+12*repump] = -1/(2*sqrt(3))
+        couplingMatrices[2][1, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+        couplingMatrices[2][2, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+        couplingMatrices[2][3, 15+12*repump] = -sqrt(2) / 3 * a - 1 / 6 * b
+        couplingMatrices[2][4, 14+12*repump] = -sqrt(2) / 3
+        couplingMatrices[2][5, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+        couplingMatrices[2][6, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+        couplingMatrices[2][7, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+        couplingMatrices[2][9, 13+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[2][10, 14+12*repump] = -1 / 3
+        couplingMatrices[2][11, 15+12*repump] = -1 / (2 * sqrt(3))
         
-        couplingMatrices[3][2, 13+12*repump] = sqrt(2)/3*a + 1/6*b
-        couplingMatrices[3][3, 14+12*repump] = sqrt(2)/3*a + 1/6*b
-        couplingMatrices[3][3, 16+12*repump] = -sqrt(2)/3*a + b/3
-        couplingMatrices[3][4, 13+12*repump] = sqrt(2)/3
-        couplingMatrices[3][6, 13+12*repump] = -a/6 + sqrt(2)/3*b
-        couplingMatrices[3][7, 14+12*repump] = -a/6 + sqrt(2)/3*b
-        couplingMatrices[3][7, 16+12*repump] = -a/3 - sqrt(2)/3*b
-        couplingMatrices[3][10, 13+12*repump] = -1/6
-        couplingMatrices[3][11, 14+12*repump] = -1/(2*sqrt(3))
-        couplingMatrices[3][12, 15+12*repump] = -1/sqrt(6)
+        couplingMatrices[3][2, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+        couplingMatrices[3][3, 14+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+        couplingMatrices[3][3, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+        couplingMatrices[3][4, 13+12*repump] = sqrt(2) / 3
+        couplingMatrices[3][6, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+        couplingMatrices[3][7, 14+12*repump] = -a / 6 + sqrt(2) / 3 * b
+        couplingMatrices[3][7, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+        couplingMatrices[3][10, 13+12*repump] = -1 / 6
+        couplingMatrices[3][11, 14+12*repump] = -1 / (2 * sqrt(3))
+        couplingMatrices[3][12, 15+12*repump] = -1 / sqrt(6)
 
         if repump == 1
-            couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(v1BranchingRatioA)
-            couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(v1BranchingRatioA)
-            couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(v1BranchingRatioA)
+            couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+            couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+            couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
 
-            couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-v1BranchingRatioA)
-            couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-v1BranchingRatioA)
-            couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-v1BranchingRatioA)
+            couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+            couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+            couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
         end
 
    else
         # excited states are all b states
-        couplingMatrices[1][1, 14+12*repump] = -a/3 + b/3/sqrt(2)
-        couplingMatrices[1][1, 16+12*repump] = -a/3 - sqrt(2)*b/3
-        couplingMatrices[1][2, 15+12*repump] = -a/3 + b/3/sqrt(2)
-        couplingMatrices[1][4, 15+12*repump] = 1/3
-        couplingMatrices[1][5, 14+12*repump] = -a/3/sqrt(2) - b/3
-        couplingMatrices[1][5, 16+12*repump] = sqrt(2)*a/3 - b/3
-        couplingMatrices[1][6, 15+12*repump] = -a/3/sqrt(2) - b/3
-        couplingMatrices[1][8, 13+12*repump] = 1/sqrt(3)
-        couplingMatrices[1][9, 14+12*repump] = 1/sqrt(6)
-        couplingMatrices[1][10, 15+12*repump] = 1/3/sqrt(2)
+        couplingMatrices[1][1, 14+12*repump] = -a / 3 + b / 3 / sqrt(2)
+        couplingMatrices[1][1, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
+        couplingMatrices[1][2, 15+12*repump] = -a / 3 + b / 3 / sqrt(2)
+        couplingMatrices[1][4, 15+12*repump] = 1 / 3
+        couplingMatrices[1][5, 14+12*repump] = -a / 3 / sqrt(2) - b / 3
+        couplingMatrices[1][5, 16+12*repump] = sqrt(2) * a / 3 - b / 3
+        couplingMatrices[1][6, 15+12*repump] = -a / 3 / sqrt(2) - b / 3
+        couplingMatrices[1][8, 13+12*repump] = 1 / sqrt(3)
+        couplingMatrices[1][9, 14+12*repump] = 1 / sqrt(6)
+        couplingMatrices[1][10, 15+12*repump] = 1 / 3 / sqrt(2)
         
-        couplingMatrices[2][1, 13+12*repump] = a/3 - b/3/sqrt(2)
-        couplingMatrices[2][2, 16+12*repump] = -a/3 - sqrt(2)*b/3
-        couplingMatrices[2][3, 15+12*repump] = -a/3 + b/3/sqrt(2)
-        couplingMatrices[2][4, 14+12*repump] = -1/3
-        couplingMatrices[2][5, 13+12*repump] = a/3/sqrt(2) + b/3
-        couplingMatrices[2][6, 16+12*repump] = sqrt(2)*a/3 - b/3
-        couplingMatrices[2][7, 15+12*repump] = -a/3/sqrt(2) - b/3
-        couplingMatrices[2][9, 13+12*repump] = 1/sqrt(6)
-        couplingMatrices[2][10, 14+12*repump] = sqrt(2)/3
-        couplingMatrices[2][11, 15+12*repump] = 1/sqrt(6)
+        couplingMatrices[2][1, 13+12*repump] = a / 3 - b / 3 / sqrt(2)
+        couplingMatrices[2][2, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
+        couplingMatrices[2][3, 15+12*repump] = -a / 3 + b / 3 / sqrt(2)
+        couplingMatrices[2][4, 14+12*repump] = -1 / 3
+        couplingMatrices[2][5, 13+12*repump] = a / 3 / sqrt(2) + b / 3
+        couplingMatrices[2][6, 16+12*repump] = sqrt(2) * a / 3 - b / 3
+        couplingMatrices[2][7, 15+12*repump] = -a / 3 / sqrt(2) - b / 3
+        couplingMatrices[2][9, 13+12*repump] = 1 / sqrt(6)
+        couplingMatrices[2][10, 14+12*repump] = sqrt(2) / 3
+        couplingMatrices[2][11, 15+12*repump] = 1 / sqrt(6)
         
-        couplingMatrices[3][2, 13+12*repump] = a/3 - b/3/sqrt(2)
-        couplingMatrices[3][3, 14+12*repump] = a/3 - b/3/sqrt(2)
-        couplingMatrices[3][3, 16+12*repump] = -a/3 - sqrt(2)*b/3
-        couplingMatrices[3][4, 13+12*repump] = 1/3
-        couplingMatrices[3][6, 13+12*repump] = a/3/sqrt(2) + b/3
-        couplingMatrices[3][7, 14+12*repump] = a/3/sqrt(2) + b/3
-        couplingMatrices[3][7, 16+12*repump] = sqrt(2)*a/3 - b/3
-        couplingMatrices[3][10, 13+12*repump] = 1/3/sqrt(2)
-        couplingMatrices[3][11, 14+12*repump] = 1/sqrt(6)
-        couplingMatrices[3][12, 15+12*repump] = 1/sqrt(3)
+        couplingMatrices[3][2, 13+12*repump] = a / 3 - b / 3 / sqrt(2)
+        couplingMatrices[3][3, 14+12*repump] = a / 3 - b / 3 / sqrt(2)
+        couplingMatrices[3][3, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
+        couplingMatrices[3][4, 13+12*repump] = 1 / 3
+        couplingMatrices[3][6, 13+12*repump] = a / 3 / sqrt(2) + b / 3
+        couplingMatrices[3][7, 14+12*repump] = a / 3 / sqrt(2) + b / 3
+        couplingMatrices[3][7, 16+12*repump] = sqrt(2) * a / 3 - b / 3
+        couplingMatrices[3][10, 13+12*repump] = 1 / 3 / sqrt(2)
+        couplingMatrices[3][11, 14+12*repump] = 1 / sqrt(6)
+        couplingMatrices[3][12, 15+12*repump] = 1 / sqrt(3)
 
         if repump == 1
             # NOTE, there's really no reason this should ever execute...B and the vibrational repump are decoupled.  force this to not happen in main program.
@@ -457,9 +458,11 @@ function makeCouplingMatrices!(couplingMatrices, a, b, XToB, repump, bichrom, v1
 end
 
 
-function makeBCouplingMatrices!(bCouplingMatrices, gs, XToB, repump, bichrom)
+function makeBCouplingMatrices!(bCouplingMatrices, XToB, repump, bichrom, mol::Molecule)
    # describes magnetic field induced larmor precession (for 'perpendicular' fields with-respect-to magnetic moment) and energy shifts (for parallel fields).  Depends on g factor for given hyperfine state
    
+    gs = mol.gFactors
+
     bCouplingMatrices[1][2, 1] = gs[1]
     bCouplingMatrices[1][3, 2] = gs[1]
     bCouplingMatrices[1][6, 5] = gs[2]
