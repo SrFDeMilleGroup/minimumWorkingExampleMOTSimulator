@@ -8,7 +8,7 @@ export bGradReal, waistInMM, numTrialsPerValueSet, velDirRelToR, initDispDir
 
 bGradReal::Float64 = 12.5 # in units Gauss/cm. If bFieldSetting == "Static", this becomes the static field in Gauss
 waistInMM::Float64 = 7 # mm, only used if polType is 3D. Handles finite MOT beam waists
-numTrialsPerValueSet::Int64 = 10 # number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
+numTrialsPerValueSet::Int64 = 100 # number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
 velDirRelToR::String = "Same" # relative direction of molecule velocity, w.r.t. initial displacement r. Options are ["Same", "Orthogonal", "Opposite", "Random"]
 initDispDir::String = "XY" # if "XY", will force initial r to go along (x+y)/sqrt(2). Simulates slowing/trapping of molecules moving along slowing axis in tandem with velDirToR = "Same". If "Z", force go along Z
 
