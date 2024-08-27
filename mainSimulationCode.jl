@@ -35,8 +35,14 @@ include("auxFunctions/generateLaserSettings.jl")
 using .laserSettings: Lasers, generateLaserSettings
 lasers = generateLaserSettings(mol)
 
-include("auxFunctions/auxFunctions.jl") # supplementary functions
-using .auxFunctions: createCouplingTermsandLaserMasks, preInitializer, densityMatrixChangeTerms!, makeForceVsTime!, generateRandPosAndVel
+include("auxFunctions/obeInitialization.jl") # supplementary functions
+using .obeInitialization: createCouplingTermsandLaserMasks, preInitializer, generateRandPosAndVel
+
+include("auxFunctions/obeEvaluation.jl") # supplementary functions
+using .obeEvaluation: densityMatrixChangeTerms!
+
+include("auxFunctions/forceCalculation.jl") # supplementary functions
+using . forceCalculation: makeForceVsTime!
  
 #6) Stuff for setting up simulation based on user's choices
 # stuff needed to determine minimum number of states, and which coupling terms to use, and which lasers actually 'use' a given coupling term (see 'laserMasks')
