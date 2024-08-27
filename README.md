@@ -16,5 +16,4 @@ Follow the instructions [here](https://julialang.org/downloads/) to use terminal
 7. parallelize
 8. longitudinal static B field
 9. using tuple for p initialized
-10. molecule constants as struct and module
-11. frequency round to 0.1
+10. frequency round to 0.1

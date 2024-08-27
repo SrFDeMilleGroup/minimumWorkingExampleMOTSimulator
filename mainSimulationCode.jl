@@ -17,79 +17,64 @@ using Trapz: trapz
 
 # 1) Go to directory and load external variables + functions
 cd(@__DIR__) # moves julia terminal to directory where this file is.  This directory should have auxFunctions+SrF(or whatever)Variables files as well
-
 include("simulationSettings/moleculeVariables.jl")
 using .moleculeVariables: SrF, CaF, BaF, MgF, CaOH, SrOH, Molecule
 mol = SrF
-
-include("auxFunctions/auxFunctions.jl") # supplementary functions
-
 
 # 2) User choices with respect to saving output files
 include("simulationSettings/saveSettings.jl")
 using .saveSettings: saveInRealUnits, saveData, saveDataFolderTag, addHeaders
 
-
 # 3) Non Laser Detuning/Pol Simulation Variables (B-field, beam-waist etc.)
-include("simulationSettings/generalSettingsOne.jl")
-using .generalSettingsOne: bGradReal, waistInMM, numTrialsPerValueSet, velDirRelToR, initDispDir
-
-
-# 4) User choices for what displacements and speeds
-include("simulationSettings/generalSettingsTwo.jl")
-using .generalSettingsTwo: longSpeeds, displacementsInMM, userSpeeds, forceProfile, bFieldSetting
-
+include("auxFunctions/generateGeneralSettings.jl")
+using .generalSettings: generateGeneralSettings, GeneralSettings
+general = generateGeneralSettings(mol)
 
 # 5) User choices for laser parameters (detuning, polarization, etc) example laser values (these all work for SrF).
-include("simulationSettings/laserSettings.jl")
-using .laserSettings: s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps
+include("auxFunctions/generateLaserSettings.jl")
+using .laserSettings: Lasers, generateLaserSettings
+lasers = generateLaserSettings(mol)
 
+include("auxFunctions/auxFunctions.jl") # supplementary functions
+using .auxFunctions: createCouplingTermsandLaserMasks, preInitializer, densityMatrixChangeTerms!, makeForceVsTime!, generateRandPosAndVel
  
 #6) Stuff for setting up simulation based on user's choices
 # stuff needed to determine minimum number of states, and which coupling terms to use, and which lasers actually 'use' a given coupling term (see 'laserMasks')
-(couplingMatrices, bCouplingMatrices, stateEnergyMatrix, laserMasks, wavenumberRatios, numZeemanStatesGround, numZeemanStatesExcited) = createCouplingTermsandLaserMasks(whichTransition, mol)
+(couplingMatrices, bCouplingMatrices, stateEnergyMatrix, numZeemanStatesGround, numZeemanStatesExcited) = createCouplingTermsandLaserMasks(lasers, mol)
 numZeemanStatesTotal = numZeemanStatesGround + numZeemanStatesExcited
-
-# define lasers structure, see auxFunctions
-lasers = Lasers(s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps, wavenumberRatios, laserMasks)
-
-# set bGrad (units Gauss * wavevector) (or make "bGrad" static, in units Gauss)
-bGrad = bFieldSetting == "Static" ? bGradReal : (1 / mol.kA * 1e2) * bGradReal
-
-waist = waistInMM * 1e-3 * mol.kA # convert to unit of 1/k, waist only used in 3D MOT code
 
 rInit = [0., 0., 0.] # placehold not used
 vInit = [0., 0., 0.] # placehold not used
+
 # note: p will include a lot of pre-allocated stuff.  This is basically all of the stuff 'passed to' the obe solver, in addition to the initial condition of the density matrix defined below
 # in retrospect p is not the best choice for the variable name but it's the julia house style...maybe replace later. (actually you can't. Julia forces ODEProblem to have a variable 'p')
-pPreInitialized = preInitializer(length(s0), numZeemanStatesGround, numZeemanStatesTotal)
+pPreInitialized = preInitializer(lasers, numZeemanStatesGround, numZeemanStatesTotal)
 
-p = [rInit, vInit, stateEnergyMatrix, lasers, waist, bGrad * mol.normalizedBohrMag,
+p = [rInit, vInit, stateEnergyMatrix, lasers, general, mol,
     couplingMatrices[1], couplingMatrices[2], couplingMatrices[3], bCouplingMatrices[1], bCouplingMatrices[2], bCouplingMatrices[3]]
 append!(p, pPreInitialized)
-push!(p, bFieldSetting)
 
 # initial value of density matrix
 pStart = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 pStart[1:12, 1:12] = Matrix(I, 12, 12) ./ 12 # molecules equally populate X N=1 states
 
 # initialize a bunch of different storage variables for simulation of force vs speed at various displacements
-forceVsTime = Array{Array{ComplexF64,2},1}(undef, numTrialsPerValueSet * 2)
-forceVsSpeed = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2) # a \dot v/|v|
-forceVsPos = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2) # a \dot r/|r|
+forceVsTime = Array{Array{ComplexF64,2},1}(undef, general.numTrialsPerValueSet * 2)
+forceVsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2) # a \dot v/|v|
+forceVsPos = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2) # a \dot r/|r|
 
-if forceProfile == "TwoD"
-    forceVsLong = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2) # az
-elseif forceProfile == "ThreeD"
+if general.forceProfile == "TwoD"
+    forceVsLong = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2) # az
+elseif general.forceProfile == "ThreeD"
 else
     error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
 end
 
-pExcVsSpeed = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2)
-pF1DownVsSpeed = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2)
-pF0VsSpeed = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2)
-pF1UpVsSpeed = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2)
-pF2VsSpeed = SharedArray{Float64}(length(userSpeeds), numTrialsPerValueSet * 2)
+pExcVsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2)
+pF1DownVsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2)
+pF0VsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2)
+pF1UpVsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2)
+pF2VsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2)
 
 # initialize some 'masks' that zero out subset of population values...helpful for quick calculation of populations in various ground states
 maskExc = zeros(numZeemanStatesTotal, numZeemanStatesTotal)
@@ -107,18 +92,17 @@ maskF2[8:12, 8:12] .= ones(5, 5)
 # In this case, hit alt-enter or opt-enter again with cursor below the double #.
 # ##
 
-
 # OK, that's the setup, now for actually obtaining some acceleration curves via our OBE solver (note: the bulk of the work is 'under the hood' in auxFunctions)
 # 8) Iterate over user choices for displacements and speeds
 if saveData
-    bString = bFieldSetting == "Static" ? "BFieldGauss" : "BGradGPerCM"
-    folderString = string(@__DIR__, "/savedData/", saveDataFolderTag, "bFieldSetting", bFieldSetting, bString, bGradReal, "Force", forceProfile, "NumLasers", length(s0), "Date", Dates.format(now(),"yyyymmdd_HHMMSS"))
+    bString = general.bFieldSetting == "Static" ? "BFieldGauss" : "BGradGPerCM"
+    folderString = string(@__DIR__, "/savedData/", saveDataFolderTag, "bFieldSetting", general.bFieldSetting, bString, general.bGradReal, "Force", general.forceProfile, "NumLasers", lasers.numLasers, "Date", Dates.format(now(),"yyyymmdd_HHMMSS"))
     mkpath(folderString)
 end
 
-for currDisp in displacementsInMM
-    for (k, currLongSpeed) in enumerate(longSpeeds)
-        for (j, currSpeed) in enumerate(userSpeeds)
+for currDisp in general.displacementsInMM
+    for (k, currLongSpeed) in enumerate(general.longSpeeds)
+        for (j, currSpeed) in enumerate(general.userSpeeds)
             if abs(currSpeed) < 0.04
                 vRound = 0.002
             elseif abs(currSpeed) < 0.1
@@ -130,11 +114,11 @@ for currDisp in displacementsInMM
             end
 
             # 8A) Set up and solve OBEs
-            (randRxs, randRys, randRzs, randVxs, randVys, randVzs) = generateRandPosAndVel(forceProfile, numTrialsPerValueSet, velDirRelToR, currDisp, currSpeed, vRound, currLongSpeed, initDispDir, mol)
+            (randRxs, randRys, randRzs, randVxs, randVys, randVzs) = generateRandPosAndVel(general, currDisp, currSpeed, vRound, currLongSpeed, mol)
             tForSteadyState = maximum([10 / currSpeed, 270]) # obtained by trial and error. Could potentially be handled more rigrorously (solve ode in steps of 'period length' until solution 'converges')
             hamiltonianPeriod = 2 * pi / vRound
             saveTimes = tForSteadyState : 0.1 : (tForSteadyState + hamiltonianPeriod) # times to record obe solution for force integration
-            for i = 1 : (numTrialsPerValueSet * 2)
+            for i = 1 : (general.numTrialsPerValueSet * 2)
                 forceVsTime[i] = zeros(length(saveTimes), 3) # 3 is for x, y, z three different directions
             end
             prob = ODEProblem(densityMatrixChangeTerms!, pStart, (0.0, tForSteadyState + hamiltonianPeriod), p)#set up OBE problem to solve
@@ -152,22 +136,22 @@ for currDisp in displacementsInMM
 
             # these two lines here actually handle the parallized runs of the ode solver
             ens_prob = EnsembleProblem(prob, prob_func=prob_func) # solve obe problem for various initial conditions re-set by 'prob_func' each iteration
-            @time sol = solve(ens_prob, Tsit5(), EnsembleThreads(); trajectories=numTrialsPerValueSet * 2, saveat=saveTimes) # parallelized OBE solver, runs on amount of threads made available by CPU (Threads.nthreads())
+            @time sol = solve(ens_prob, Tsit5(), EnsembleThreads(); trajectories=general.numTrialsPerValueSet * 2, saveat=saveTimes) # parallelized OBE solver, runs on amount of threads made available by CPU (Threads.nthreads())
             
             # 8B) calculate forces (f\dot r/|r|, etc.) for each random R, V trial..
-            @time for i = 1 : (numTrialsPerValueSet*2)
+            @time for i = 1 : (general.numTrialsPerValueSet*2)
                 currSol = sol[i]
                 makeForceVsTime!(forceVsTime[i], currSol.t, currSol.u, lasers,
-                couplingMatrices, stateEnergyMatrix, waist, [randRxs[i], randRys[i], randRzs[i]], [randVxs[i], randVys[i], randVzs[i]])
+                couplingMatrices, stateEnergyMatrix, [randRxs[i], randRys[i], randRzs[i]], [randVxs[i], randVys[i], randVzs[i]])
 
-                if forceProfile == "TwoD"
+                if general.forceProfile == "TwoD"
                     # forceVsSpeed = (f \dot v) / |v| with time average
                     forceVsSpeed[j, i] = (randVxs[i] * trapz(currSol.t, forceVsTime[i][:, 1]) + randVys[i] * trapz(currSol.t, forceVsTime[i][:, 2])) / 1e-3 / sqrt(randVxs[i] .^ 2 + randVys[i] .^ 2) / (currSol.t[end] - currSol.t[1])
                     # forceVsPos = (f \dot r) / |r| with time average
                     forceVsPos[j, i] = (randRxs[i] * trapz(currSol.t, forceVsTime[i][:, 1]) + randRys[i] * trapz(currSol.t, forceVsTime[i][:, 2])) / 1e-3 / sqrt(randRxs[i] .^ 2 + randRys[i] .^ 2) / (currSol.t[end] - currSol.t[1])
                     # forceVsLong = fz with time average
-                    forceVsLong[j,i] = trapz(currSol.t, forceVsTime[i][:, 3]) / 1e-3 / (currSol.t[end] - currSol.t[1])
-                elseif forceProfile == "ThreeD"
+                    forceVsLong[j, i] = trapz(currSol.t, forceVsTime[i][:, 3]) / 1e-3 / (currSol.t[end] - currSol.t[1])
+                elseif general.forceProfile == "ThreeD"
                     # forceVsSpeed = (f \dot v) / |v| with time average 
                     forceVsSpeed[j, i] = (randVxs[i] * trapz(currSol.t, forceVsTime[i][:, 1]) +
                     randVys[i] * trapz(currSol.t, forceVsTime[i][:, 2]) +
@@ -192,20 +176,20 @@ for currDisp in displacementsInMM
         # 8C) for given set of speeds, for current choices of longSpeed and displacement, average a \dot v, a \dot r, populations,etc. over runs
         forceVsSpeedAvg = mean(forceVsSpeed, dims=2)
         forceVsSpeedAvg = dropdims(forceVsSpeedAvg, dims=(2)) # converts to vector
-        forceVsSpeedUnc = std(forceVsSpeed, dims=2) ./ sqrt(numTrialsPerValueSet * 2)
+        forceVsSpeedUnc = std(forceVsSpeed, dims=2) ./ sqrt(general.numTrialsPerValueSet * 2)
         forceVsSpeedUnc = dropdims(forceVsSpeedUnc, dims=(2))
 
         forceVsPosAvg = mean(forceVsPos, dims=2)
         forceVsPosAvg = dropdims(forceVsPosAvg, dims=(2))
-        forceVsPosUnc = std(forceVsPos, dims=2) ./ sqrt(numTrialsPerValueSet * 2)
+        forceVsPosUnc = std(forceVsPos, dims=2) ./ sqrt(general.numTrialsPerValueSet * 2)
         forceVsPosUnc = dropdims(forceVsPosUnc, dims=(2))
 
-        if forceProfile == "TwoD"
+        if general.forceProfile == "TwoD"
             forceVsLongAvg = mean(forceVsLong, dims=2)
             forceVsLongAvg = dropdims(forceVsLongAvg, dims=(2))
-            forceVsLongUnc = std(forceVsLong, dims=2) ./ sqrt(numTrialsPerValueSet * 2)
+            forceVsLongUnc = std(forceVsLong, dims=2) ./ sqrt(general.numTrialsPerValueSet * 2)
             forceVsLongUnc = dropdims(forceVsLongUnc, dims=(2))
-        elseif forceProfile == "ThreeD"
+        elseif general.forceProfile == "ThreeD"
         else
             error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
         end
@@ -223,23 +207,23 @@ for currDisp in displacementsInMM
 
         # 8D) convert to real units if applicable and save data
         (forceVsSpeedAvgSaveVals, forceVsSpeedUncSaveVals, forceVsPosAvgSaveVals, forceVsPosUncSaveVals) = (forceVsSpeedAvg, forceVsSpeedUnc, forceVsPosAvg, forceVsPosUnc) .* (saveInRealUnits ? mol.accelFactor : 1)
-        userSpeedsSaveVals = userSpeeds .* (saveInRealUnits ? mol.velFactor : 1)
+        userSpeedsSaveVals = general.userSpeeds .* (saveInRealUnits ? mol.velFactor : 1)
         
-        if forceProfile == "TwoD"
+        if general.forceProfile == "TwoD"
             (forceVsLongAvgSaveVals, forceVsLongUncSaveVals) = (forceVsLongAvg,forceVsLongUnc) .* (saveInRealUnits ? mol.accelFactor : 1)
             currLongSpeedSaveVals = currLongSpeed .* (saveInRealUnits ? mol.velFactor : 1)
-        elseif forceProfile == "ThreeD"
+        elseif general.forceProfile == "ThreeD"
         else
             error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
         end
         
         if saveData
-            open(string(folderString, "/forceVsSpeedDisplacement", currDisp, "MM", velDirRelToR, "Dir", ".dat"), "a") do io
+            open(string(folderString, "/forceVsSpeedDisplacement", currDisp, "MM", general.velDirRelToR, "Dir", ".dat"), "a") do io
                 if addHeaders && k==1
-                    if forceProfile == "TwoD"
+                    if general.forceProfile == "TwoD"
                         headers = ["Speed" "av" "av_std" "ar"  "ar_std"  "LongSpeed" "az" "az_std" "PF1Down" "PF0" "PF1Up" "PF2" "PExc"]
                         writedlm(io, headers)
-                    elseif forceProfile == "ThreeD"
+                    elseif general.forceProfile == "ThreeD"
                         headers = ["Speed" "av" "av_std" "ar"  "ar_std" "PF1Down" "PF0" "PF1Up" "PF2" "PExc"]
                         writedlm(io, headers)
                     else
@@ -248,9 +232,9 @@ for currDisp in displacementsInMM
                 end
                 
                 # if you've already added headers/don't want them, just append the current forceVsSpeed to the relevant file (so, if you have different longSpeeds, they'll all show up in same file since file is distinguished by displacement)
-                if forceProfile == "TwoD"
+                if general.forceProfile == "TwoD"
                     writedlm(io, hcat(userSpeedsSaveVals, forceVsSpeedAvgSaveVals, forceVsSpeedUncSaveVals, forceVsPosAvgSaveVals, forceVsPosUncSaveVals, fill(currLongSpeedSaveVals,length(userSpeeds)), forceVsLongAvgSaveVals, forceVsLongUncSaveVals, pF1DownVsSpeedAvg, pF0VsSpeedAvg, pF1UpVsSpeedAvg, pF2VsSpeedAvg, pExcVsSpeedAvg))
-                elseif forceProfile == "ThreeD"
+                elseif general.forceProfile == "ThreeD"
                     writedlm(io, hcat(userSpeedsSaveVals, forceVsSpeedAvgSaveVals, forceVsSpeedUncSaveVals, forceVsPosAvgSaveVals, forceVsPosUncSaveVals, pF1DownVsSpeedAvg, pF0VsSpeedAvg, pF1UpVsSpeedAvg, pF2VsSpeedAvg, pExcVsSpeedAvg))
                 else
                     throw("Invalid forceProfile value: $forceProfile. Valid values are 'ThreeD' or 'TwoD'.")
@@ -259,8 +243,8 @@ for currDisp in displacementsInMM
         end
 
         # don't loop over longSpeeds since it doesn't matter for "ThreeD" forceProfile
-        if forceProfile == "TwoD"
-        elseif forceProfile == "ThreeD"
+        if general.forceProfile == "TwoD"
+        elseif general.forceProfile == "ThreeD"
             break 
         else
             error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
@@ -273,6 +257,6 @@ end # for displacements
 laserVarHeaders = ["s0" "energy" "polSign" "whichTransition" "polType" "sidebandFreqs" "sidebandAmps"]
 if saveData
     open(string(folderString, "/laserVariables.dat"), "w") do io
-        writedlm(io, [laserVarHeaders ; hcat(s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps)])
+        writedlm(io, [laserVarHeaders ; hcat(lasers.s0, lasers.laserEnergy, lasers.polSign, lasers.whichTransition, lasers.polType, lasers.sidebandFreqs, lasers.sidebandAmps)])
     end
 end

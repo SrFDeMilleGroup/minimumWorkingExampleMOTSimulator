@@ -1,896 +1,865 @@
-using LinearAlgebra: mul!
-using Random: Xoshiro
+module auxFunctions
 
-# include("../simulationSettings/moleculeVariables.jl")
-# using .moleculeVariables: Molecule
+    using LinearAlgebra: tr, mul!
+    using Random: Xoshiro
 
-# Fix the random number generator seed for reproducibility
-# Don't use the default RNG, as it may be called in other background processes.
-myRNG = Xoshiro(123) 
+    using ..moleculeVariables: Molecule
+    using ..laserSettings: Lasers
+    using ..generalSettings: GeneralSettings
 
+    export preInitializer, generateRandPosAndVel, createCouplingTermsandLaserMasks, makeForceVsTime!
 
-struct Lasers
-    s0::Vector{Float64} # saturation intensity at laser center (single pass)
-    laserEnergy::Vector{Float64} # energy of laser (note: zero energy defined to be energy of transition from |X\Sigma,F=1,J=1/2> to |F'=1>)
-    polSign::Vector{Int64} # polarization sign (for configurations using \sigma+/- light. Defines if x-axis, say, is +\sigma or -\sigma (and corresponding changes to other axes...))
-    whichTransition::Vector{String} # "XB", "XA", or "XARepump"
-    polType::Vector{String} # polType can be "3D" (sig +/-, with z-axis (quadrupole coil axis) reversed wrt other axes), "2DSS" (sig +/- but lasers only in x,y direction. if \sig+ along +x then \sig- along +y).  
-                            # "2DPar"(lasers in x,y direction both polarized along z). "2DPerp" (x laser polarized along y, y polarized along z). "Slower" (z laser linearly polarized along x)
-    sidebandFreqs::Vector{Float64} # frequency at which sidebands are driven
-    sidebandAmps::Vector{Float64} # phase modulation depth in radians
-    wavenumberRatios::Vector{Float64} # ratio of k_{Laser} to k_{A} 
-    laserMasks::Vector{Matrix{Float64}} # used in calculation of density matrix evolution. Turns off coupling terms corresponding to, for example, X->B and X(v=1)->A for a laser with 'whichTransition'="XA"
-end
+    # Fix the random number generator seed for reproducibility
+    # Don't use the default RNG, as it may be called in other background processes.
+    myRNG = Xoshiro(123) 
 
 
-function preInitializer(numLasers, numZeemanStatesGround, numZeemanStatesTotal)
-    # initializes a bunch of stuff used in the OBE solver.  Julia likes things pre-initialized if possible
+    function preInitializer(lasers::Lasers, numZeemanStatesGround, numZeemanStatesTotal)
+        # initializes a bunch of stuff used in the OBE solver.  Julia likes things pre-initialized if possible
 
-    # holds the modified coupling matrices used in decay terms
-    coupleMatEff1 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    coupleMatEff2 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    coupleMatEff3 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        # holds the modified coupling matrices used in decay terms
+        coupleMatEff1 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        coupleMatEff2 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        coupleMatEff3 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 
-    # convenient for fast evaluation of terms used in the 'decay' term of the density matrix evolution (second term in eq 1 of main writeup)
-    decayMaskAllButTopLeft = zeros(Float64, numZeemanStatesTotal, numZeemanStatesTotal);
-    decayMaskAllButTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, (numZeemanStatesGround+1):numZeemanStatesTotal] .= -1
-    decayMaskAllButTopLeft[1:numZeemanStatesGround, (numZeemanStatesGround+1):numZeemanStatesTotal] .= -1 / 2
-    decayMaskAllButTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, 1:numZeemanStatesGround] .= -1 / 2
-    decayMaskForCalcTopLeft = zeros(Int64, numZeemanStatesTotal, numZeemanStatesTotal)
-    decayMaskForCalcTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, (numZeemanStatesGround+1):numZeemanStatesTotal] .= 1
+        # convenient for fast evaluation of terms used in the 'decay' term of the density matrix evolution (second term in eq 1 of main writeup)
+        decayMaskAllButTopLeft = zeros(Float64, numZeemanStatesTotal, numZeemanStatesTotal);
+        decayMaskAllButTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, (numZeemanStatesGround+1):numZeemanStatesTotal] .= -1
+        decayMaskAllButTopLeft[1:numZeemanStatesGround, (numZeemanStatesGround+1):numZeemanStatesTotal] .= -1 / 2
+        decayMaskAllButTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, 1:numZeemanStatesGround] .= -1 / 2
+        decayMaskForCalcTopLeft = zeros(Int64, numZeemanStatesTotal, numZeemanStatesTotal)
+        decayMaskForCalcTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, (numZeemanStatesGround+1):numZeemanStatesTotal] .= 1
 
-    # now we make a bunch of initializations.  This makes the julia code run much faster at the cost of some readability...
-    r = Vector{Float64}(undef, 3)
+        # now we make a bunch of initializations.  This makes the julia code run much faster at the cost of some readability...
+        r = Vector{Float64}(undef, 3)
 
-    # fieldTerms[i] are the projections of the light field for laser[i] at a given position on the \sigma^-, \pi, \sigma^+ basis
-    fieldTerms = [zeros(ComplexF64, 3) for i in 1:numLasers]
+        # fieldTerms[i] are the projections of the light field for laser[i] at a given position on the \sigma^-, \pi, \sigma^+ basis
+        fieldTerms = [zeros(ComplexF64, 3) for i in 1:lasers.numLasers]
 
-    # will eventually 'hold' the atom-light matrix term of the hamiltonian during the diff-eq solver (see densityMatrixChangeTerms! in auxFunctions)
-    atomLightTerm = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        # will eventually 'hold' the atom-light matrix term of the hamiltonian during the diff-eq solver (see densityMatrixChangeTerms! in auxFunctions)
+        atomLightTerm = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 
-    # bField terms are the projections of magnetic field at a given position on the \sigma^-,\pi,\sigma^+ basis. bFieldTermFull basically holds the 'mu' tensor
-    bFieldTerms = Vector{ComplexF64}(undef, 3)
-    bFieldTermFull = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        # bField terms are the projections of magnetic field at a given position on the \sigma^-,\pi,\sigma^+ basis. bFieldTermFull basically holds the 'mu' tensor
+        bFieldTerms = Vector{ComplexF64}(undef, 3)
+        bFieldTermFull = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 
-    # will eventually hold the -\mu \cdot B (and hermitian conjugate) terms
-    uProdBField = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    bFieldProdU = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        # will eventually hold the -\mu \cdot B (and hermitian conjugate) terms
+        uProdBField = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        bFieldProdU = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 
-    # initializations of some matrices used to speed up the decay term calculation
-    decayFull = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pOnlyExcitedStates = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pTopLeft1PreMult = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pTopLeft2PreMult = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pTopLeft3PreMult = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pTopLeft1 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pTopLeft2 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-    pTopLeft3 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        # initializations of some matrices used to speed up the decay term calculation
+        decayFull = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pOnlyExcitedStates = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pTopLeft1PreMult = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pTopLeft2PreMult = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pTopLeft3PreMult = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pTopLeft1 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pTopLeft2 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
+        pTopLeft3 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 
-    # return pre-initialized stuff from here to join the rest of the pre-initialized stuff in the 'main' program
-    pPreInitialized = [coupleMatEff1, coupleMatEff2, coupleMatEff3, decayMaskAllButTopLeft, 
-    decayMaskForCalcTopLeft, r, fieldTerms, atomLightTerm, bFieldTerms, bFieldTermFull, uProdBField, bFieldProdU, decayFull,
-    pOnlyExcitedStates, pTopLeft1PreMult, pTopLeft2PreMult, pTopLeft3PreMult, pTopLeft1, pTopLeft2, pTopLeft3]
+        # return pre-initialized stuff from here to join the rest of the pre-initialized stuff in the 'main' program
+        pPreInitialized = [coupleMatEff1, coupleMatEff2, coupleMatEff3, decayMaskAllButTopLeft, 
+        decayMaskForCalcTopLeft, r, fieldTerms, atomLightTerm, bFieldTerms, bFieldTermFull, uProdBField, bFieldProdU, decayFull,
+        pOnlyExcitedStates, pTopLeft1PreMult, pTopLeft2PreMult, pTopLeft3PreMult, pTopLeft1, pTopLeft2, pTopLeft3]
 
-    return pPreInitialized
-end
+        return pPreInitialized
+    end
 
 
-function generateRandPosAndVel(forceProfile, numTrialsPerSpeed, velDirRelToR, currDisp, currSpeed, vRound, longSpeed, initDispDir, mol::Molecule)
-    # Function generates a set of random positions and 'pseudo'-random velocities (direction determined by 'velDirRelToR' + whether 'force profile' is 2D or 3D.)
-    # if forceProfile is TwoD: z position is assumed to not matter, z velocity is fixed to longSpeed, and direction of velocity relative to random choice of \phi where x=disp*(cos(\phi)), etc. determined by velDirRelToR
-    # if forceProfile is ThreeD: longSpeed isn't used, and direction of velocity chosen relative to random x,y,z direction of position is determined by velDirRelToR
+    function generateRandPosAndVel(general::GeneralSettings, currDisp, currSpeed, vRound, longSpeed, mol::Molecule)
+        # Function generates a set of random positions and 'pseudo'-random velocities (direction determined by 'velDirRelToR' + whether 'force profile' is 2D or 3D.)
+        # if forceProfile is TwoD: z position is assumed to not matter, z velocity is fixed to longSpeed, and direction of velocity relative to random choice of \phi where x=disp*(cos(\phi)), etc. determined by velDirRelToR
+        # if forceProfile is ThreeD: longSpeed isn't used, and direction of velocity chosen relative to random x,y,z direction of position is determined by velDirRelToR
 
-    if forceProfile == "TwoD"
-        # randomize position direction
-        randPhisPos = rand(myRNG, numTrialsPerSpeed) * 2 * pi
-        randRxs = cos.(randPhisPos) .* currDisp .* 1e-3 .* mol.kA
-        randRys = sin.(randPhisPos) .* currDisp .* 1e-3 .* mol.kA
-        randRzs = rand(myRNG, numTrialsPerSpeed) * 2 * pi
+        forceProfile = general.forceProfile
+        velDirRelToR = general.velDirRelToR
+        initDispDir = general.initDispDir
+        numTrialsPerSpeed = general.numTrialsPerValueSet
 
-        if velDirRelToR == "Random" #randomize phi
-            randPhisVels = rand(myRNG, numTrialsPerSpeed) * 2 * pi
-        elseif velDirRelToR == "Same"
-            randPhisVels = randPhisPos
-        elseif velDirRelToR == "Orthogonal"
-            randPhisVels = randPhisPos .+ pi/2
-        elseif velDirRelToR == "Opposite"
-            randPhisVels = randPhisPos .+ pi
-        else
-            throw(ArgumentError(string("Invalid choice of velDirRelToR, ", velDirRelToR, ". Valid options are Same, Orthogonal, Opposite, Random.")))
-        end
-        randVxs = round.(currSpeed .* cos.(randPhisVels) ./ vRound) .* vRound
-        randVys = round.(currSpeed .* sin.(randPhisVels) ./ vRound) .* vRound
-        randVzs = fill(round(longSpeed/vRound)*vRound, numTrialsPerSpeed)
+        if forceProfile == "TwoD"
+            # randomize position direction
+            randPhisPos = rand(myRNG, numTrialsPerSpeed) * 2 * pi
+            randRxs = cos.(randPhisPos) .* currDisp .* 1e-3 .* mol.kA
+            randRys = sin.(randPhisPos) .* currDisp .* 1e-3 .* mol.kA
+            randRzs = rand(myRNG, numTrialsPerSpeed) * 2 * pi
 
-    elseif forceProfile == "ThreeD"
-        # if initDispDir=="XY", force position to be along (x+y)/sqrt(2) (e.g., entering from slower); if initDispDir=="Z", then it forces along Z
-        if initDispDir == "XY"
-            randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-            randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-            randRzs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)            
-        elseif initDispDir == "Z"
-            randRxs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-            randRys = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-            randRzs = currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
-        else
-            throw(ArgumentError(string("Invalid choice of initDispDir, ", initDispDir, ". Valid options are XY or Z.")))
-        end
-        normTerms = sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2)
-        randX = randRxs ./ normTerms
-        randY = randRys ./ normTerms
-        randZ = randRzs ./ normTerms
-
-        if velDirRelToR == "Random" # random velocity direction as wel
-            randX = rand(myRNG, numTrialsPerSpeed) .- 0.5 # re-roll
-            randY = rand(myRNG, numTrialsPerSpeed) .- 0.5
-            randZ = rand(myRNG, numTrialsPerSpeed) .- 0.5
-            normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2)
-            randVxs = randX ./ normTerms .* currSpeed
-            randVys = randY ./ normTerms .* currSpeed
-            randVzs = randZ ./ normTerms .* currSpeed
-        elseif velDirRelToR == "Same"
-            randVxs = randX .* currSpeed
-            randVys = randY .* currSpeed
-            randVzs = randZ .* currSpeed
-        elseif velDirRelToR == "Orthogonal"
-	        randX2 = rand(myRNG, numTrialsPerSpeed) .- 0.5
-	        randY2 = rand(myRNG, numTrialsPerSpeed) .- 0.5
-	        randZ2 = rand(myRNG, numTrialsPerSpeed) .- 0.5
-            for i = 1:numTrialsPerSpeed
-                (randX2[i],randY2[i],randZ2[i]) =[randX2[i],randY2[i],randZ2[i]] - dot([randX[i],randY[i],randZ[i]],[randX2[i],randY2[i],randZ2[i]]) .* [randX[i],randY[i],randZ[i]]
+            if velDirRelToR == "Random" #randomize phi
+                randPhisVels = rand(myRNG, numTrialsPerSpeed) * 2 * pi
+            elseif velDirRelToR == "Same"
+                randPhisVels = randPhisPos
+            elseif velDirRelToR == "Orthogonal"
+                randPhisVels = randPhisPos .+ pi/2
+            elseif velDirRelToR == "Opposite"
+                randPhisVels = randPhisPos .+ pi
+            else
+                throw(ArgumentError(string("Invalid choice of velDirRelToR, ", velDirRelToR, ". Valid options are Same, Orthogonal, Opposite, Random.")))
             end
-	        normTerms = sqrt.(randX2.^2 .+ randY2.^2 .+ randZ2 .^2)
-            randVxs = randX2 ./ normTerms .* currSpeed
-            randVys = randY2 ./ normTerms .* currSpeed
-            randVzs = randZ2 ./ normTerms .* currSpeed
-        elseif velDirRelToR == "Opposite"
-            randVxs = -randX .* currSpeed
-            randVys = -randY .* currSpeed
-            randVzs = -randZ .* currSpeed
+            randVxs = round.(currSpeed .* cos.(randPhisVels) ./ vRound) .* vRound
+            randVys = round.(currSpeed .* sin.(randPhisVels) ./ vRound) .* vRound
+            randVzs = fill(round(longSpeed/vRound)*vRound, numTrialsPerSpeed)
+
+        elseif forceProfile == "ThreeD"
+            # if initDispDir=="XY", force position to be along (x+y)/sqrt(2) (e.g., entering from slower); if initDispDir=="Z", then it forces along Z
+            if initDispDir == "XY"
+                randRxs = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+                randRys = 1 ./ sqrt(2) .* currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+                randRzs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)            
+            elseif initDispDir == "Z"
+                randRxs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+                randRys = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+                randRzs = currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+            else
+                throw(ArgumentError(string("Invalid choice of initDispDir, ", initDispDir, ". Valid options are XY or Z.")))
+            end
+            normTerms = sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2)
+            randX = randRxs ./ normTerms
+            randY = randRys ./ normTerms
+            randZ = randRzs ./ normTerms
+
+            if velDirRelToR == "Random" # random velocity direction as wel
+                randX = rand(myRNG, numTrialsPerSpeed) .- 0.5 # re-roll
+                randY = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                randZ = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                normTerms = sqrt.(randX.^2 .+ randY.^2 .+ randZ.^2)
+                randVxs = randX ./ normTerms .* currSpeed
+                randVys = randY ./ normTerms .* currSpeed
+                randVzs = randZ ./ normTerms .* currSpeed
+            elseif velDirRelToR == "Same"
+                randVxs = randX .* currSpeed
+                randVys = randY .* currSpeed
+                randVzs = randZ .* currSpeed
+            elseif velDirRelToR == "Orthogonal"
+                randX2 = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                randY2 = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                randZ2 = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                for i = 1:numTrialsPerSpeed
+                    (randX2[i],randY2[i],randZ2[i]) =[randX2[i],randY2[i],randZ2[i]] - dot([randX[i],randY[i],randZ[i]],[randX2[i],randY2[i],randZ2[i]]) .* [randX[i],randY[i],randZ[i]]
+                end
+                normTerms = sqrt.(randX2.^2 .+ randY2.^2 .+ randZ2 .^2)
+                randVxs = randX2 ./ normTerms .* currSpeed
+                randVys = randY2 ./ normTerms .* currSpeed
+                randVzs = randZ2 ./ normTerms .* currSpeed
+            elseif velDirRelToR == "Opposite"
+                randVxs = -randX .* currSpeed
+                randVys = -randY .* currSpeed
+                randVzs = -randZ .* currSpeed
+            else
+                throw(ArgumentError(string("Invalid choice of velDirRelToR, ", velDirRelToR, ". Valid options are Same, Orthogonal, Opposite, Random.")))
+            end
+            randVxs = round.(randVxs ./ vRound) .* vRound
+            randVys = round.(randVys ./ vRound) .* vRound
+            randVzs = round.(randVzs ./ vRound) .* vRound
         else
-            throw(ArgumentError(string("Invalid choice of velDirRelToR, ", velDirRelToR, ". Valid options are Same, Orthogonal, Opposite, Random.")))
+            throw(ArgumentError(string("Invalid choice of forceProfile, ", forceProfile, ". Valid options are TwoD or ThreeD.")))
         end
-        randVxs = round.(randVxs ./ vRound) .* vRound
-        randVys = round.(randVys ./ vRound) .* vRound
-        randVzs = round.(randVzs ./ vRound) .* vRound
-    else
-        throw(ArgumentError(string("Invalid choice of forceProfile, ", forceProfile, ". Valid options are TwoD or ThreeD.")))
-    end
 
-    # run for both +/- r and +/- v (better statistics)
-    randRxs = [randRxs; -randRxs]
-    randRys = [randRys; -randRys]
-    randRzs = [randRzs; -randRzs]
-    randVxs = [randVxs; -randVxs]
-    randVys = [randVys; -randVys]
-    if forceProfile == "TwoD"
-        randVzs = [randVzs; randVzs] # for 2D, Vz is always "longSpeed"
-    elseif forceProfile == "ThreeD"
-        randVzs = [randVzs; -randVzs]
-    else
-        throw(ArgumentError(string("Invalid choice of forceProfile, ", forceProfile, ". Valid options are TwoD or ThreeD.")))
-    end
-    
-    # velocity along any dimension cannot be zero (particle should have x,y,z all change throughout OBE evolution to ensure periodicity)
-    for i = 1:numTrialsPerSpeed*2
-        if randVxs[i] == 0
-            randVxs[i] = vRound * sign(rand(myRNG) - 0.5)
-        end
-        if randVys[i] == 0
-            randVys[i] = vRound * sign(rand(myRNG) - 0.5)
-        end
-        if randVzs[i] == 0
-            randVzs[i] = vRound * sign(rand(myRNG) - 0.5)
-        end
-    end
-    
-    return randRxs, randRys, randRzs, randVxs, randVys, randVzs
-end
-
-
-function createCouplingTermsandLaserMasks(whichTransition, mol::Molecule)
-    # This function does a number of things
-
-    # 1) determine how many ground and excited states are needed (12 ground if no lasers are "XARepumps", 24 if there are repumps. 4 excited if only one of "A" or "B" are used, 8 if both are)
-
-    # 2) Based on this, write out "stateEnergyMatrix". Ultimately this is subtracted from the laser energy in the OBE solver exp(-i*t*(energyDiff)) like term. All columns are identical.  
-    # 2 (cont)) each row (i) is the energy of |i> relative to |F=1,J=1/2> (if i is a ground state) or |E,F'=1> for |i> corresponding to either E=A\Pi or E=B\Sigma.
-
-    # 3) make "Masks" for lasers based on what transition the laser corresponds to. This is multiplied element-wise with coupling matrix in the OBE solver (densityMatrixChangeTerms). This is zero
-    # for terms that are not coupled together by the matrix (e.g., turns off X->A coupling for X->B laser, etc. and 1 for terms that are)
-
-    # 4) similarly, record wavenumber ratio based on what transition laser corresponds to.  
-
-    # 5) Establish 'coupling' (C matrices, eq 12-14 of writeup, basically 'clebsch-gordan' like terms) and 'b-coupling' matrices (C_B matrices, eq 27-29 of writeup.  Basically a 'B-field' coupling matrix based on g_{F} terms)
-    # 5 (cont)) Terms C_{i,j} are zero unless i=ground and j=excited.  size of matrix determined by number of excited states and ground states needed.  C_{i,j}[k] is the coupling from i->j for polarization k
-    # 5 (cont)) Terms C_{B,i,j} are zero unless i and j are in same F manifold.  size of matrix determined by number of excited states and ground states needed.  C_{B,i,j}[k] is the coupling from i->j for <B\cdot p_{k}>/|B|, where p_{k} is the \sigma^-/+,\pi basis
-
-    #1)
-    bichrom = 0 # winds up 0 if only XA of XB are used, 1 if both are
-    repump = 0 # winds up 0 if no repump, 1 if there are repumps
-    XToB = 0 # winds up 1 if only lasers are XB
-    if "XB" in whichTransition
-        if "XA" in whichTransition
-            bichrom = 1
+        # run for both +/- r and +/- v (better statistics)
+        randRxs = [randRxs; -randRxs]
+        randRys = [randRys; -randRys]
+        randRzs = [randRzs; -randRzs]
+        randVxs = [randVxs; -randVxs]
+        randVys = [randVys; -randVys]
+        if forceProfile == "TwoD"
+            randVzs = [randVzs; randVzs] # for 2D, Vz is always "longSpeed"
+        elseif forceProfile == "ThreeD"
+            randVzs = [randVzs; -randVzs]
         else
-            XToB = 1
+            throw(ArgumentError(string("Invalid choice of forceProfile, ", forceProfile, ". Valid options are TwoD or ThreeD.")))
+        end
+        
+        # velocity along any dimension cannot be zero (particle should have x,y,z all change throughout OBE evolution to ensure periodicity)
+        for i = 1:numTrialsPerSpeed*2
+            if randVxs[i] == 0
+                randVxs[i] = vRound * sign(rand(myRNG) - 0.5)
+            end
+            if randVys[i] == 0
+                randVys[i] = vRound * sign(rand(myRNG) - 0.5)
+            end
+            if randVzs[i] == 0
+                randVzs[i] = vRound * sign(rand(myRNG) - 0.5)
+            end
+        end
+        
+        return randRxs, randRys, randRzs, randVxs, randVys, randVzs
+    end
+
+
+    function createCouplingTermsandLaserMasks(lasers::Lasers, mol::Molecule)
+        # This function does a number of things
+
+        # 1) determine how many ground and excited states are needed (12 ground if no lasers are "XARepumps", 24 if there are repumps. 4 excited if only one of "A" or "B" are used, 8 if both are)
+
+        # 2) Based on this, write out "stateEnergyMatrix". Ultimately this is subtracted from the laser energy in the OBE solver exp(-i*t*(energyDiff)) like term. All columns are identical.  
+        # 2 (cont)) each row (i) is the energy of |i> relative to |F=1,J=1/2> (if i is a ground state) or |E,F'=1> for |i> corresponding to either E=A\Pi or E=B\Sigma.
+
+        # 3) Establish 'coupling' (C matrices, eq 12-14 of writeup, basically 'clebsch-gordan' like terms) and 'b-coupling' matrices (C_B matrices, eq 27-29 of writeup.  Basically a 'B-field' coupling matrix based on g_{F} terms)
+        # 3 (cont)) Terms C_{i,j} are zero unless i=ground and j=excited.  size of matrix determined by number of excited states and ground states needed.  C_{i,j}[k] is the coupling from i->j for polarization k
+        # 3 (cont)) Terms C_{B,i,j} are zero unless i and j are in same F manifold.  size of matrix determined by number of excited states and ground states needed.  C_{B,i,j}[k] is the coupling from i->j for <B\cdot p_{k}>/|B|, where p_{k} is the \sigma^-/+,\pi basis
+
+        #1)
+        bichrom = (("XA" in lasers.whichTransition) && ("XB" in lasers.whichTransition)) ? 1 : 0 # winds up 0 if only XA of XB are used, 1 if both are
+        XToB = (!("XA" in lasers.whichTransition) && ("XB" in lasers.whichTransition)) ? 1 : 0 # winds up 1 if only lasers are XB
+        repump = ("XARepump" in lasers.whichTransition) ? 1 : 0 # winds up 0 if no repump, 1 if there are repumps
+
+        numZeemanStatesGround = 12 + 12 * repump
+        numZeemanStatesExcited = 4 + 4 * bichrom
+        numZeemanStatesTotal = numZeemanStatesGround + numZeemanStatesExcited
+
+        #2)
+        # fill(groundStateEnergy, numZeemanStatesEachHyperfineLevel)
+        stateEnergiesColumnFormat = [fill(mol.stateEnergiesGround[1], 3); fill(mol.stateEnergiesGround[2], 1); fill(mol.stateEnergiesGround[3], 3); fill(mol.stateEnergiesGround[4], 5)]
+        if repump == 1
+            # NOTE this assumes hyperfine splitting is the same in v=1 repump...not quite right but close enough
+            stateEnergiesColumnFormat = vcat(stateEnergiesColumnFormat, stateEnergiesColumnFormat)
+        end
+        stateEnergiesColumnFormat = [stateEnergiesColumnFormat; fill(0, 4+4*bichrom)]
+
+        stateEnergyMatrix = repeat(stateEnergiesColumnFormat, 1, numZeemanStatesTotal)
+        if XToB == 1 || bichrom == 1
+            stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- mol.stateEnergiesExcited[2] # handles excited state hyperfine splitting of |B\Sigma,F=0> level. 
+            if bichrom == 1
+                stateEnergyMatrix[1:numZeemanStatesGround, end-4] = stateEnergyMatrix[1:numZeemanStatesGround, end-4] .- mol.stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
+            end
+        else
+            stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- mol.stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
+        end
+
+        #3)
+        couplingMatrices = Matrix[zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal)]
+
+        makeCouplingMatrices!(couplingMatrices, XToB, repump, bichrom, mol)
+
+        bCouplingMatrices = Matrix[zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal)]
+
+        makeBCouplingMatrices!(bCouplingMatrices, XToB, repump, bichrom, mol)
+
+        return couplingMatrices, bCouplingMatrices, stateEnergyMatrix, numZeemanStatesGround, numZeemanStatesExcited
+    end
+
+
+    function makeCouplingMatrices!(couplingMatrices, XToB, repump, bichrom, mol::Molecule)
+        # makes C_{i,j}[k] matrices.  What these look like depend on what ground/excited states are included
+        # Choice 1) bichrom means that both A and B are 'spoken' to, and thus there are 8 excited states.
+        # Choice 2) XToB=0 is true if no lasers 'talk' to B.  Thus, all 4 excited states are A states
+        # Choice 3) Thus, if bichrom=0 and XToB=1, all 4 excited states are B states
+        # In all cases, repump can be added, and thus there are 12 ground states. These can only be coupled to the A state
+
+        # these are all hardcoded for the assumption of a SrF, CaF, etc. type molecule where the alkaline has no hyperfine structure and, in the X\Sigma,N=1 state there
+        # is mixing between 'pure' |F=1,J=1/2> and |F=1,J=3/2> that can be parameterized by a,b where |F=1,J~3/2> = a|F=1,J=3/2>+b|F=1,J=1/2> and |F=1,J~1/2> = -b|F=1,J=3/2>+a|F=1,J=1/2>
+        # See Appendix A in writeup
+
+        a = mol.jMixingRatioA
+        b = mol.jMixingRatioB
+
+        if bichrom == 1 
+            # note: 12*repump term in second index forces 'excited' index to start at appropriate place, e.g. 13 for no repump, 25 if there is repump
+            couplingMatrices[1][1, 14+12*repump] = -sqrt(2) / 3 * a - b / 6
+            couplingMatrices[1][1, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+            couplingMatrices[1][2, 15+12*repump] = -sqrt(2) / 3 * a - b / 6
+            couplingMatrices[1][4, 15+12*repump] = sqrt(2) / 3
+            couplingMatrices[1][5, 14+12*repump] = a / 6 - sqrt(2) / 3 * b
+            couplingMatrices[1][5, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+            couplingMatrices[1][6, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+            couplingMatrices[1][8, 13+12*repump] = -1 / sqrt(6)
+            couplingMatrices[1][9, 14+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[1][10, 15+12*repump] = -1 / 6
+            couplingMatrices[1][1, 14+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
+            couplingMatrices[1][1, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
+            couplingMatrices[1][2, 15+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
+            couplingMatrices[1][4, 15+4+12*repump] = 1 / 3
+            couplingMatrices[1][5, 14+4+12*repump] = -a / 3 / sqrt(2) - b / 3
+            couplingMatrices[1][5, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
+            couplingMatrices[1][6, 15+4+12*repump] = -a / 3 / sqrt(2) - b / 3
+            couplingMatrices[1][8, 13+4+12*repump] = 1 / sqrt(3)
+            couplingMatrices[1][9, 14+4+12*repump] = 1 / sqrt(6)
+            couplingMatrices[1][10, 15+4+12*repump] = 1 / 3 / sqrt(2)
+
+            couplingMatrices[2][1, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+            couplingMatrices[2][2, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+            couplingMatrices[2][3, 15+12*repump] = -sqrt(2) / 3 * a - 1 / 6 * b
+            couplingMatrices[2][4, 14+12*repump] = -sqrt(2) / 3
+            couplingMatrices[2][5, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+            couplingMatrices[2][6, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+            couplingMatrices[2][7, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+            couplingMatrices[2][9, 13+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[2][10, 14+12*repump] = -1 / 3
+            couplingMatrices[2][11, 15+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[2][1, 13+4+12*repump] = a / 3 - b / 3 / sqrt(2)
+            couplingMatrices[2][2, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
+            couplingMatrices[2][3, 15+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
+            couplingMatrices[2][4, 14+4+12*repump] = -1 / 3
+            couplingMatrices[2][5, 13+4+12*repump] = a / 3 / sqrt(2) + b / 3
+            couplingMatrices[2][6, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
+            couplingMatrices[2][7, 15+4+12*repump] = -a / 3 / sqrt(2) - b / 3
+            couplingMatrices[2][9, 13+4+12*repump] = 1 / sqrt(6)
+            couplingMatrices[2][10, 14+4+12*repump] = sqrt(2) / 3
+            couplingMatrices[2][11, 15+4+12*repump] = 1 / sqrt(6)
+
+            couplingMatrices[3][2, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+            couplingMatrices[3][3, 14+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+            couplingMatrices[3][3, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+            couplingMatrices[3][4, 13+12*repump] = sqrt(2) / 3
+            couplingMatrices[3][6, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+            couplingMatrices[3][7, 14+12*repump] = -a / 6 + sqrt(2) / 3 * b
+            couplingMatrices[3][7, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+            couplingMatrices[3][10, 13+12*repump] = -1 / 6
+            couplingMatrices[3][11, 14+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[3][12, 15+12*repump] = -1 / sqrt(6)
+            couplingMatrices[3][2, 13+4+12*repump] = a / 3 - b / 3 / sqrt(2)
+            couplingMatrices[3][3, 14+4+12*repump] = a / 3 - b / 3 / sqrt(2)
+            couplingMatrices[3][3, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
+            couplingMatrices[3][4, 13+4+12*repump] = 1 / 3
+            couplingMatrices[3][6, 13+4+12*repump] = a / 3 / sqrt(2) + b / 3
+            couplingMatrices[3][7, 14+4+12*repump] = a / 3 / sqrt(2) + b / 3
+            couplingMatrices[3][7, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
+            couplingMatrices[3][10, 13+4+12*repump] = 1 / 3 / sqrt(2)
+            couplingMatrices[3][11, 14+4+12*repump] = 1 / sqrt(6)
+            couplingMatrices[3][12, 15+4+12*repump] = 1 / sqrt(3)
+
+            if repump == 1
+                couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+                couplingMatrices[1][13:24, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
+                couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+                couplingMatrices[2][13:24, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
+                couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+                couplingMatrices[3][13:24, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
+
+                couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+                couplingMatrices[1][1:12, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
+                couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+                couplingMatrices[2][1:12, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
+                couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+                couplingMatrices[3][1:12, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
+            end
+
+        elseif XToB == 0 
+            # excited states are all "A" states
+            couplingMatrices[1][1, 14+12*repump] = -sqrt(2) / 3 * a - b / 6
+            couplingMatrices[1][1, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+            couplingMatrices[1][2, 15+12*repump] = -sqrt(2) / 3 * a - b / 6
+            couplingMatrices[1][4, 15+12*repump] = sqrt(2) / 3
+            couplingMatrices[1][5, 14+12*repump] = a / 6 - sqrt(2) / 3 * b
+            couplingMatrices[1][5, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+            couplingMatrices[1][6, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+            couplingMatrices[1][8, 13+12*repump] = -1 / sqrt(6)
+            couplingMatrices[1][9, 14+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[1][10, 15+12*repump] = -1 / 6
+            
+            couplingMatrices[2][1, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+            couplingMatrices[2][2, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+            couplingMatrices[2][3, 15+12*repump] = -sqrt(2) / 3 * a - 1 / 6 * b
+            couplingMatrices[2][4, 14+12*repump] = -sqrt(2) / 3
+            couplingMatrices[2][5, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+            couplingMatrices[2][6, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+            couplingMatrices[2][7, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
+            couplingMatrices[2][9, 13+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[2][10, 14+12*repump] = -1 / 3
+            couplingMatrices[2][11, 15+12*repump] = -1 / (2 * sqrt(3))
+            
+            couplingMatrices[3][2, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+            couplingMatrices[3][3, 14+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
+            couplingMatrices[3][3, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
+            couplingMatrices[3][4, 13+12*repump] = sqrt(2) / 3
+            couplingMatrices[3][6, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
+            couplingMatrices[3][7, 14+12*repump] = -a / 6 + sqrt(2) / 3 * b
+            couplingMatrices[3][7, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
+            couplingMatrices[3][10, 13+12*repump] = -1 / 6
+            couplingMatrices[3][11, 14+12*repump] = -1 / (2 * sqrt(3))
+            couplingMatrices[3][12, 15+12*repump] = -1 / sqrt(6)
+
+            if repump == 1
+                couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+                couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+                couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+
+                couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+                couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+                couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+            end
+
+        else
+            # excited states are all b states
+            couplingMatrices[1][1, 14+12*repump] = -a / 3 + b / 3 / sqrt(2)
+            couplingMatrices[1][1, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
+            couplingMatrices[1][2, 15+12*repump] = -a / 3 + b / 3 / sqrt(2)
+            couplingMatrices[1][4, 15+12*repump] = 1 / 3
+            couplingMatrices[1][5, 14+12*repump] = -a / 3 / sqrt(2) - b / 3
+            couplingMatrices[1][5, 16+12*repump] = sqrt(2) * a / 3 - b / 3
+            couplingMatrices[1][6, 15+12*repump] = -a / 3 / sqrt(2) - b / 3
+            couplingMatrices[1][8, 13+12*repump] = 1 / sqrt(3)
+            couplingMatrices[1][9, 14+12*repump] = 1 / sqrt(6)
+            couplingMatrices[1][10, 15+12*repump] = 1 / 3 / sqrt(2)
+            
+            couplingMatrices[2][1, 13+12*repump] = a / 3 - b / 3 / sqrt(2)
+            couplingMatrices[2][2, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
+            couplingMatrices[2][3, 15+12*repump] = -a / 3 + b / 3 / sqrt(2)
+            couplingMatrices[2][4, 14+12*repump] = -1 / 3
+            couplingMatrices[2][5, 13+12*repump] = a / 3 / sqrt(2) + b / 3
+            couplingMatrices[2][6, 16+12*repump] = sqrt(2) * a / 3 - b / 3
+            couplingMatrices[2][7, 15+12*repump] = -a / 3 / sqrt(2) - b / 3
+            couplingMatrices[2][9, 13+12*repump] = 1 / sqrt(6)
+            couplingMatrices[2][10, 14+12*repump] = sqrt(2) / 3
+            couplingMatrices[2][11, 15+12*repump] = 1 / sqrt(6)
+            
+            couplingMatrices[3][2, 13+12*repump] = a / 3 - b / 3 / sqrt(2)
+            couplingMatrices[3][3, 14+12*repump] = a / 3 - b / 3 / sqrt(2)
+            couplingMatrices[3][3, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
+            couplingMatrices[3][4, 13+12*repump] = 1 / 3
+            couplingMatrices[3][6, 13+12*repump] = a / 3 / sqrt(2) + b / 3
+            couplingMatrices[3][7, 14+12*repump] = a / 3 / sqrt(2) + b / 3
+            couplingMatrices[3][7, 16+12*repump] = sqrt(2) * a / 3 - b / 3
+            couplingMatrices[3][10, 13+12*repump] = 1 / 3 / sqrt(2)
+            couplingMatrices[3][11, 14+12*repump] = 1 / sqrt(6)
+            couplingMatrices[3][12, 15+12*repump] = 1 / sqrt(3)
+
+            if repump == 1
+                # NOTE, there's really no reason this should ever execute...B and the vibrational repump are decoupled.  force this to not happen in main program.
+                throw(ArgumentError("Repump and XToB are both 1. This is not allowed for now."))
+                couplingMatrices[1][13: 24,25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(0)
+                couplingMatrices[2][13: 24,25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(0)
+                couplingMatrices[3][13: 24,25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(0)
+            end
         end
     end
-    if "XARepump" in whichTransition
-        repump = 1
-    end
-    numZeemanStatesGround = 12 + 12 * repump
-    numZeemanStatesExcited = 4 + 4 * bichrom
-    numZeemanStatesTotal = numZeemanStatesGround + numZeemanStatesExcited
 
-    #2)
-    # fill(groundStateEnergy, numZeemanStatesEachHyperfineLevel)
-    stateEnergiesColumnFormat = [fill(mol.stateEnergiesGround[1], 3); fill(mol.stateEnergiesGround[2], 1); fill(mol.stateEnergiesGround[3], 3); fill(mol.stateEnergiesGround[4], 5)]
-    if repump == 1
-        # NOTE this assumes hyperfine splitting is the same in v=1 repump...not quite right but close enough
-        stateEnergiesColumnFormat = vcat(stateEnergiesColumnFormat, stateEnergiesColumnFormat)
-    end
-    stateEnergiesColumnFormat = [stateEnergiesColumnFormat; fill(0, 4+4*bichrom)]
 
-    stateEnergyMatrix = repeat(stateEnergiesColumnFormat, 1, numZeemanStatesTotal)
-    if XToB == 1 || bichrom == 1
-        stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- mol.stateEnergiesExcited[2] # handles excited state hyperfine splitting of |B\Sigma,F=0> level. 
+    function makeBCouplingMatrices!(bCouplingMatrices, XToB, repump, bichrom, mol::Molecule)
+    # describes magnetic field induced larmor precession (for 'perpendicular' fields with-respect-to magnetic moment) and energy shifts (for parallel fields).  Depends on g factor for given hyperfine state
+    
+        gs = mol.gFactors
+
+        bCouplingMatrices[1][2, 1] = gs[1]
+        bCouplingMatrices[1][3, 2] = gs[1]
+        bCouplingMatrices[1][6, 5] = gs[2]
+        bCouplingMatrices[1][7, 6] = gs[2]
+        bCouplingMatrices[1][9, 8] = sqrt(2) * gs[3]
+        bCouplingMatrices[1][10, 9] = sqrt(3) * gs[3]
+        bCouplingMatrices[1][11, 10] = sqrt(3) * gs[3]
+        bCouplingMatrices[1][12, 11] = sqrt(2) * gs[3]
+
         if bichrom == 1
-            stateEnergyMatrix[1:numZeemanStatesGround, end-4] = stateEnergyMatrix[1:numZeemanStatesGround, end-4] .- mol.stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
-        end
-    else
-        stateEnergyMatrix[1:numZeemanStatesGround, end] = stateEnergyMatrix[1:numZeemanStatesGround, end] .- mol.stateEnergiesExcited[1] # handles excited state hyperfine splitting of |A\Pi,F=0> level. 
-    end
-
-    #3+4)
-    laserMasks = [zeros(numZeemanStatesTotal, numZeemanStatesTotal) for i=1:length(whichTransition)]
-    wavenumberRatios = Vector{Float64}(undef, length(whichTransition))
-    for (i, currTransition) in enumerate(whichTransition)
-        if currTransition == "XA"
-            laserMasks[i][1:12, (13+12*repump):(16+12*repump)] .= 1
-            wavenumberRatios[i] = 1.0
-        elseif currTransition == "XB"
-            laserMasks[i][1:12, (13+12*repump+4*bichrom):(16+12*repump+4*bichrom)] .= 1
-            wavenumberRatios[i] = mol.kB / mol.kA
-        elseif currTransition == "XARepump"
-            laserMasks[i][13:24, 25:28] .= 1
-            wavenumberRatios[i] = mol.kRepump / mol.kA
+            bCouplingMatrices[1][14+12*repump, 13+12*repump] = gs[4]
+            bCouplingMatrices[1][15+12*repump, 14+12*repump] = gs[4]
+            bCouplingMatrices[1][14+12*repump+4, 13+12*repump+4] = gs[5]
+            bCouplingMatrices[1][15+12*repump+4, 14+12*repump+4] = gs[5]
+        elseif XToB == 1
+            bCouplingMatrices[1][14+12*repump, 13+12*repump] = gs[5]
+            bCouplingMatrices[1][15+12*repump, 14+12*repump] = gs[5]
         else
-            throw(ArgumentError(string("Invalid choice of whichTransition, ", currTransition, ". Valid options are XA, XB, XARepump.")))
+            bCouplingMatrices[1][14+12*repump, 13+12*repump] = gs[4]
+            bCouplingMatrices[1][15+12*repump, 14+12*repump] = gs[4]
         end
-    end
 
-    #5)
-    couplingMatrices = Matrix[zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal)]
+        bCouplingMatrices[2][1, 1] = -gs[1]
+        bCouplingMatrices[2][3, 3] = gs[1]
+        bCouplingMatrices[2][5, 5] = -gs[2]
+        bCouplingMatrices[2][7, 7] = gs[2]
+        bCouplingMatrices[2][8, 8] = -2 * gs[3]
+        bCouplingMatrices[2][9, 9] = -gs[3]
+        bCouplingMatrices[2][11, 11] = gs[3]
+        bCouplingMatrices[2][12, 12] = 2 * gs[3]
 
-    makeCouplingMatrices!(couplingMatrices, XToB, repump, bichrom, mol)
+        if bichrom == 1
+            bCouplingMatrices[2][13+12*repump, 13+12*repump] = -gs[4]
+            bCouplingMatrices[2][15+12*repump, 15+12*repump] = gs[4]
+            bCouplingMatrices[2][13+12*repump+4, 13+12*repump+4] = -gs[5]
+            bCouplingMatrices[2][15+12*repump+4, 15+12*repump+4] = gs[5]
+        elseif XToB == 1
+            bCouplingMatrices[2][13+12*repump, 13+12*repump] = -gs[5]
+            bCouplingMatrices[2][15+12*repump, 15+12*repump] = gs[5]
+        else
+            bCouplingMatrices[2][13+12*repump, 13+12*repump] = -gs[4]
+            bCouplingMatrices[2][15+12*repump, 15+12*repump] = gs[4]
+        end
 
-    bCouplingMatrices = Matrix[zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal), zeros(numZeemanStatesTotal, numZeemanStatesTotal)]
+        bCouplingMatrices[3][1, 2] = -gs[1]
+        bCouplingMatrices[3][2, 3] = -gs[1]
+        bCouplingMatrices[3][5, 6] = -gs[2]
+        bCouplingMatrices[3][6, 7] = -gs[2]
+        bCouplingMatrices[3][8, 9] = -sqrt(2) * gs[3]
+        bCouplingMatrices[3][9, 10] = -sqrt(3) * gs[3]
+        bCouplingMatrices[3][10, 11] = -sqrt(3) * gs[3]
+        bCouplingMatrices[3][11, 12] = -sqrt(2) * gs[3]
 
-    makeBCouplingMatrices!(bCouplingMatrices, XToB, repump, bichrom, mol)
-
-    return couplingMatrices, bCouplingMatrices, stateEnergyMatrix, laserMasks, wavenumberRatios, numZeemanStatesGround, numZeemanStatesExcited
-end
-
-function makeCouplingMatrices!(couplingMatrices, XToB, repump, bichrom, mol::Molecule)
-    # makes C_{i,j}[k] matrices.  What these look like depend on what ground/excited states are included
-    # Choice 1) bichrom means that both A and B are 'spoken' to, and thus there are 8 excited states.
-    # Choice 2) XToB=0 is true if no lasers 'talk' to B.  Thus, all 4 excited states are A states
-    # Choice 3) Thus, if bichrom=0 and XToB=1, all 4 excited states are B states
-    # In all cases, repump can be added, and thus there are 12 ground states. These can only be coupled to the A state
-
-    # these are all hardcoded for the assumption of a SrF, CaF, etc. type molecule where the alkaline has no hyperfine structure and, in the X\Sigma,N=1 state there
-    # is mixing between 'pure' |F=1,J=1/2> and |F=1,J=3/2> that can be parameterized by a,b where |F=1,J~3/2> = a|F=1,J=3/2>+b|F=1,J=1/2> and |F=1,J~1/2> = -b|F=1,J=3/2>+a|F=1,J=1/2>
-    # See Appendix A in writeup
-
-    a = mol.jMixingRatioA
-    b = mol.jMixingRatioB
-
-    if bichrom == 1 
-        # note: 12*repump term in second index forces 'excited' index to start at appropriate place, e.g. 13 for no repump, 25 if there is repump
-        couplingMatrices[1][1, 14+12*repump] = -sqrt(2) / 3 * a - b / 6
-        couplingMatrices[1][1, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
-        couplingMatrices[1][2, 15+12*repump] = -sqrt(2) / 3 * a - b / 6
-        couplingMatrices[1][4, 15+12*repump] = sqrt(2) / 3
-        couplingMatrices[1][5, 14+12*repump] = a / 6 - sqrt(2) / 3 * b
-        couplingMatrices[1][5, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
-        couplingMatrices[1][6, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
-        couplingMatrices[1][8, 13+12*repump] = -1 / sqrt(6)
-        couplingMatrices[1][9, 14+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[1][10, 15+12*repump] = -1 / 6
-        couplingMatrices[1][1, 14+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
-        couplingMatrices[1][1, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
-        couplingMatrices[1][2, 15+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
-        couplingMatrices[1][4, 15+4+12*repump] = 1 / 3
-        couplingMatrices[1][5, 14+4+12*repump] = -a / 3 / sqrt(2) - b / 3
-        couplingMatrices[1][5, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
-        couplingMatrices[1][6, 15+4+12*repump] = -a / 3 / sqrt(2) - b / 3
-        couplingMatrices[1][8, 13+4+12*repump] = 1 / sqrt(3)
-        couplingMatrices[1][9, 14+4+12*repump] = 1 / sqrt(6)
-        couplingMatrices[1][10, 15+4+12*repump] = 1 / 3 / sqrt(2)
-
-        couplingMatrices[2][1, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
-        couplingMatrices[2][2, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
-        couplingMatrices[2][3, 15+12*repump] = -sqrt(2) / 3 * a - 1 / 6 * b
-        couplingMatrices[2][4, 14+12*repump] = -sqrt(2) / 3
-        couplingMatrices[2][5, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
-        couplingMatrices[2][6, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
-        couplingMatrices[2][7, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
-        couplingMatrices[2][9, 13+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[2][10, 14+12*repump] = -1 / 3
-        couplingMatrices[2][11, 15+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[2][1, 13+4+12*repump] = a / 3 - b / 3 / sqrt(2)
-        couplingMatrices[2][2, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
-        couplingMatrices[2][3, 15+4+12*repump] = -a / 3 + b / 3 / sqrt(2)
-        couplingMatrices[2][4, 14+4+12*repump] = -1 / 3
-        couplingMatrices[2][5, 13+4+12*repump] = a / 3 / sqrt(2) + b / 3
-        couplingMatrices[2][6, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
-        couplingMatrices[2][7, 15+4+12*repump] = -a / 3 / sqrt(2) - b / 3
-        couplingMatrices[2][9, 13+4+12*repump] = 1 / sqrt(6)
-        couplingMatrices[2][10, 14+4+12*repump] = sqrt(2) / 3
-        couplingMatrices[2][11, 15+4+12*repump] = 1 / sqrt(6)
-
-        couplingMatrices[3][2, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
-        couplingMatrices[3][3, 14+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
-        couplingMatrices[3][3, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
-        couplingMatrices[3][4, 13+12*repump] = sqrt(2) / 3
-        couplingMatrices[3][6, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
-        couplingMatrices[3][7, 14+12*repump] = -a / 6 + sqrt(2) / 3 * b
-        couplingMatrices[3][7, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
-        couplingMatrices[3][10, 13+12*repump] = -1 / 6
-        couplingMatrices[3][11, 14+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[3][12, 15+12*repump] = -1 / sqrt(6)
-        couplingMatrices[3][2, 13+4+12*repump] = a / 3 - b / 3 / sqrt(2)
-        couplingMatrices[3][3, 14+4+12*repump] = a / 3 - b / 3 / sqrt(2)
-        couplingMatrices[3][3, 16+4+12*repump] = -a / 3 - sqrt(2) * b / 3
-        couplingMatrices[3][4, 13+4+12*repump] = 1 / 3
-        couplingMatrices[3][6, 13+4+12*repump] = a / 3 / sqrt(2) + b / 3
-        couplingMatrices[3][7, 14+4+12*repump] = a / 3 / sqrt(2) + b / 3
-        couplingMatrices[3][7, 16+4+12*repump] = sqrt(2) * a / 3 - b / 3
-        couplingMatrices[3][10, 13+4+12*repump] = 1 / 3 / sqrt(2)
-        couplingMatrices[3][11, 14+4+12*repump] = 1 / sqrt(6)
-        couplingMatrices[3][12, 15+4+12*repump] = 1 / sqrt(3)
-
+        if bichrom == 1
+            bCouplingMatrices[3][13+12*repump, 14+12*repump] = -gs[4]
+            bCouplingMatrices[3][14+12*repump, 15+12*repump] = -gs[4]
+            bCouplingMatrices[3][13+12*repump+4, 14+12*repump+4] = -gs[5]
+            bCouplingMatrices[3][14+12*repump+4, 15+12*repump+4] = -gs[5]
+        elseif XToB == 1
+            bCouplingMatrices[3][13+12*repump, 14+12*repump] = -gs[5]
+            bCouplingMatrices[3][14+12*repump, 15+12*repump] = -gs[5]
+        else
+            bCouplingMatrices[3][13+12*repump, 14+12*repump] = -gs[4]
+            bCouplingMatrices[3][14+12*repump, 15+12*repump] = -gs[4]
+        end
+        
         if repump == 1
-            couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
-            couplingMatrices[1][13:24, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
-            couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
-            couplingMatrices[2][13:24, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
-            couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
-            couplingMatrices[3][13:24, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(mol.v1BranchingRatioB)
-
-            couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
-            couplingMatrices[1][1:12, 29:32] = couplingMatrices[1][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
-            couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
-            couplingMatrices[2][1:12, 29:32] = couplingMatrices[2][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
-            couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
-            couplingMatrices[3][1:12, 29:32] = couplingMatrices[3][1:12, 29:32] .* sqrt(1-mol.v1BranchingRatioB)
+            bCouplingMatrices[1][13:24, 13:24] = bCouplingMatrices[1][1:12, 1:12]
+            bCouplingMatrices[2][13:24, 13:24] = bCouplingMatrices[2][1:12, 1:12]
+            bCouplingMatrices[3][13:24, 13:24] = bCouplingMatrices[3][1:12, 1:12]
         end
+    end
 
-    elseif XToB == 0 
-        # excited states are all "A" states
-        couplingMatrices[1][1, 14+12*repump] = -sqrt(2) / 3 * a - b / 6
-        couplingMatrices[1][1, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
-        couplingMatrices[1][2, 15+12*repump] = -sqrt(2) / 3 * a - b / 6
-        couplingMatrices[1][4, 15+12*repump] = sqrt(2) / 3
-        couplingMatrices[1][5, 14+12*repump] = a / 6 - sqrt(2) / 3 * b
-        couplingMatrices[1][5, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
-        couplingMatrices[1][6, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
-        couplingMatrices[1][8, 13+12*repump] = -1 / sqrt(6)
-        couplingMatrices[1][9, 14+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[1][10, 15+12*repump] = -1 / 6
-        
-        couplingMatrices[2][1, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
-        couplingMatrices[2][2, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
-        couplingMatrices[2][3, 15+12*repump] = -sqrt(2) / 3 * a - 1 / 6 * b
-        couplingMatrices[2][4, 14+12*repump] = -sqrt(2) / 3
-        couplingMatrices[2][5, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
-        couplingMatrices[2][6, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
-        couplingMatrices[2][7, 15+12*repump] = a / 6 - sqrt(2) / 3 * b
-        couplingMatrices[2][9, 13+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[2][10, 14+12*repump] = -1 / 3
-        couplingMatrices[2][11, 15+12*repump] = -1 / (2 * sqrt(3))
-        
-        couplingMatrices[3][2, 13+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
-        couplingMatrices[3][3, 14+12*repump] = sqrt(2) / 3 * a + 1 / 6 * b
-        couplingMatrices[3][3, 16+12*repump] = -sqrt(2) / 3 * a + b / 3
-        couplingMatrices[3][4, 13+12*repump] = sqrt(2) / 3
-        couplingMatrices[3][6, 13+12*repump] = -a / 6 + sqrt(2) / 3 * b
-        couplingMatrices[3][7, 14+12*repump] = -a / 6 + sqrt(2) / 3 * b
-        couplingMatrices[3][7, 16+12*repump] = -a / 3 - sqrt(2) / 3 * b
-        couplingMatrices[3][10, 13+12*repump] = -1 / 6
-        couplingMatrices[3][11, 14+12*repump] = -1 / (2 * sqrt(3))
-        couplingMatrices[3][12, 15+12*repump] = -1 / sqrt(6)
 
-        if repump == 1
-            couplingMatrices[1][13:24, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
-            couplingMatrices[2][13:24, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
-            couplingMatrices[3][13:24, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(mol.v1BranchingRatioA)
+    function propR!(r, rInit::Vector{Float64}, v::Vector{Float64}, t::Float64)
+        r[1] = rInit[1] + v[1] * t
+        r[2] = rInit[2] + v[2] * t
+        r[3] = rInit[3] + v[3] * t
+    end
 
-            couplingMatrices[1][1:12, 25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
-            couplingMatrices[2][1:12, 25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
-            couplingMatrices[3][1:12, 25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(1-mol.v1BranchingRatioA)
+
+    function makeFieldTerms!(fieldTerms, r::Vector{Float64}, polSign::Vector{Int64}, polType::Vector{String}, wavenumberRatios::Vector{Float64}, waist::Float64) 
+        # These are different for 2D MOT
+        # returns 'field terms' for all lasers. Field terms depend on the polarization type (and, if \sigma +/-, the sign)
+        # This is basically the field for laser [i] due to the 6 (if 3D), or 1 (for Slower/push), or 4 (for all 2D lasers) passes of the beam expressed in the standard \sigma^- ([i][1]), \pi ([i][2]) and \sigma^+ ([i][3])
+        # This is calculated in the way illustrated in JOSAB 6(11) 2023-2045 (1989) by Cohen-Tannoudji + Dalibard section 2.  See also Eq15-16 and subsequent expressions in my writeup for the 3D example.
+
+        # IMPORTANT CAVEAT: all terms are 'pre-conjugated' since only the complex conjugate of this term is ever used (Eq 21 of my writeup).  Better to just express it pre-conjugated instead of 
+        # repeatedly taking conjugates in the diff-eq solver
+
+        for i = 1:length(polSign) # iterate through all lasers
+            if polType[i] == "Slower" 
+                # polarization vs position for a given laser depends on whether it a "3D\sig\sig", "2D\sig\sig", slower, etc.
+                fieldTerms[i][1] = 1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) + im * sin(r[3] * wavenumberRatios[i]))
+                fieldTerms[i][2] = 0
+                fieldTerms[i][3] = -1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) + im * sin(r[3] * wavenumberRatios[i]))
+
+            elseif polType[i] == "Push"
+                fieldTerms[i][1] = 1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) - im * sin(r[3] * wavenumberRatios[i]))
+                fieldTerms[i][2] = 0
+                fieldTerms[i][3] = -1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) - im * sin(r[3] * wavenumberRatios[i]))
+
+            elseif polType[i] == "2DSS"
+                fieldTerms[i][1] = polSign[i] * sin(r[1] * wavenumberRatios[i]) + im * cos(r[2] * wavenumberRatios[i])
+                fieldTerms[i][2] = sqrt(2) * im * (cos(r[1] * wavenumberRatios[i]) - polSign[i]*sin(r[2] * wavenumberRatios[i]))
+                fieldTerms[i][3] = polSign[i] * sin(r[1] * wavenumberRatios[i]) - im * cos(r[2] * wavenumberRatios[i])
+
+            elseif polType[i] == "2DPerp"
+                fieldTerms[i][1] = -sqrt(2) * im * cos(r[1] * wavenumberRatios[i])
+                fieldTerms[i][2] = 2 * cos(r[2] * wavenumberRatios[i])
+                fieldTerms[i][3] = -sqrt(2) * im * cos(r[1] * wavenumberRatios[i])
+
+            elseif polType[i] == "2DPar"
+                fieldTerms[i][1] = 0
+                fieldTerms[i][2] = 2 * (cos(r[2] * wavenumberRatios[i])+cos(r[1] * wavenumberRatios[i]))
+                fieldTerms[i][3] = 0
+
+            elseif polType[i] == "3D"
+                fieldTerms[i][1] = cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) .+ polSign[i] * sin(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) .-
+                im * (polSign[i] * sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) .- cos(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2))
+            
+                fieldTerms[i][2] = sqrt(2) * im * (cos(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) .+
+                polSign[i] * sin(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2))
+            
+                fieldTerms[i][3] = cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) .+ polSign[i] * sin(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) .+
+                im * (polSign[i] * sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) - cos(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2))
+            else
+                throw(ArgumentError("Invalid polType value: $polType. It must be one of ['Slower', 'Push', '2DSS', '2DPerp', '2DPar', '3D']."))
+            end
         end
+    end
 
-   else
-        # excited states are all b states
-        couplingMatrices[1][1, 14+12*repump] = -a / 3 + b / 3 / sqrt(2)
-        couplingMatrices[1][1, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
-        couplingMatrices[1][2, 15+12*repump] = -a / 3 + b / 3 / sqrt(2)
-        couplingMatrices[1][4, 15+12*repump] = 1 / 3
-        couplingMatrices[1][5, 14+12*repump] = -a / 3 / sqrt(2) - b / 3
-        couplingMatrices[1][5, 16+12*repump] = sqrt(2) * a / 3 - b / 3
-        couplingMatrices[1][6, 15+12*repump] = -a / 3 / sqrt(2) - b / 3
-        couplingMatrices[1][8, 13+12*repump] = 1 / sqrt(3)
-        couplingMatrices[1][9, 14+12*repump] = 1 / sqrt(6)
-        couplingMatrices[1][10, 15+12*repump] = 1 / 3 / sqrt(2)
         
-        couplingMatrices[2][1, 13+12*repump] = a / 3 - b / 3 / sqrt(2)
-        couplingMatrices[2][2, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
-        couplingMatrices[2][3, 15+12*repump] = -a / 3 + b / 3 / sqrt(2)
-        couplingMatrices[2][4, 14+12*repump] = -1 / 3
-        couplingMatrices[2][5, 13+12*repump] = a / 3 / sqrt(2) + b / 3
-        couplingMatrices[2][6, 16+12*repump] = sqrt(2) * a / 3 - b / 3
-        couplingMatrices[2][7, 15+12*repump] = -a / 3 / sqrt(2) - b / 3
-        couplingMatrices[2][9, 13+12*repump] = 1 / sqrt(6)
-        couplingMatrices[2][10, 14+12*repump] = sqrt(2) / 3
-        couplingMatrices[2][11, 15+12*repump] = 1 / sqrt(6)
+    function makeBFieldTerms!(bFieldTerms::Vector{ComplexF64}, r::Vector{Float64}, bFieldSetting::String)
+        # expresses B field at position r in the \sigma^+/-, pi basis
         
-        couplingMatrices[3][2, 13+12*repump] = a / 3 - b / 3 / sqrt(2)
-        couplingMatrices[3][3, 14+12*repump] = a / 3 - b / 3 / sqrt(2)
-        couplingMatrices[3][3, 16+12*repump] = -a / 3 - sqrt(2) * b / 3
-        couplingMatrices[3][4, 13+12*repump] = 1 / 3
-        couplingMatrices[3][6, 13+12*repump] = a / 3 / sqrt(2) + b / 3
-        couplingMatrices[3][7, 14+12*repump] = a / 3 / sqrt(2) + b / 3
-        couplingMatrices[3][7, 16+12*repump] = sqrt(2) * a / 3 - b / 3
-        couplingMatrices[3][10, 13+12*repump] = 1 / 3 / sqrt(2)
-        couplingMatrices[3][11, 14+12*repump] = 1 / sqrt(6)
-        couplingMatrices[3][12, 15+12*repump] = 1 / sqrt(3)
-
-        if repump == 1
-            # NOTE, there's really no reason this should ever execute...B and the vibrational repump are decoupled.  force this to not happen in main program.
-            throw(ArgumentError("Repump and XToB are both 1. This is not allowed for now."))
-            couplingMatrices[1][13: 24,25:28] = couplingMatrices[1][1:12, 25:28] .* sqrt(0)
-            couplingMatrices[2][13: 24,25:28] = couplingMatrices[2][1:12, 25:28] .* sqrt(0)
-            couplingMatrices[3][13: 24,25:28] = couplingMatrices[3][1:12, 25:28] .* sqrt(0)
+        if bFieldSetting == "TwoD"
+            bFieldTerms[1] = 1 / sqrt(2) * (r[1] - im * r[2])
+            bFieldTerms[2] = -0 * (r[3])
+            bFieldTerms[3] = 1 / sqrt(2) * (-r[1] - im * r[2])
+        elseif bFieldSetting == "ThreeD"
+            bFieldTerms[1] = 1 / sqrt(2) * (r[1] + im * r[2])
+            bFieldTerms[2] = -1 * (r[3]) # note: really this should be -2r[3] for a quadropole field.  In practice, I prefer to run my f(r) for random direction at constant B.  So, assume \tilde{r}=(x,y,z/2).
+            bFieldTerms[3] = 1 / sqrt(2) * (-r[1] + im * r[2])
+        elseif bFieldSetting == "Static"
+            bFieldTerms[1] = (im+1)/2
+            bFieldTerms[2] = 0
+            bFieldTerms[3] = (-1+im)/2
+            # bFieldTerms[1] = 0
+            # bFieldTerms[2] = 1
+            # bFieldTerms[3] = 0
+        else
+            throw(ArgumentError("Invalid bFieldSetting value: $bFieldSetting. It must be one of ['ThreeD', 'TwoD', 'Static']."))
         end
-   end
-end
-
-
-function makeBCouplingMatrices!(bCouplingMatrices, XToB, repump, bichrom, mol::Molecule)
-   # describes magnetic field induced larmor precession (for 'perpendicular' fields with-respect-to magnetic moment) and energy shifts (for parallel fields).  Depends on g factor for given hyperfine state
-   
-    gs = mol.gFactors
-
-    bCouplingMatrices[1][2, 1] = gs[1]
-    bCouplingMatrices[1][3, 2] = gs[1]
-    bCouplingMatrices[1][6, 5] = gs[2]
-    bCouplingMatrices[1][7, 6] = gs[2]
-    bCouplingMatrices[1][9, 8] = sqrt(2) * gs[3]
-    bCouplingMatrices[1][10, 9] = sqrt(3) * gs[3]
-    bCouplingMatrices[1][11, 10] = sqrt(3) * gs[3]
-    bCouplingMatrices[1][12, 11] = sqrt(2) * gs[3]
-
-    if bichrom == 1
-        bCouplingMatrices[1][14+12*repump, 13+12*repump] = gs[4]
-        bCouplingMatrices[1][15+12*repump, 14+12*repump] = gs[4]
-        bCouplingMatrices[1][14+12*repump+4, 13+12*repump+4] = gs[5]
-        bCouplingMatrices[1][15+12*repump+4, 14+12*repump+4] = gs[5]
-    elseif XToB == 1
-        bCouplingMatrices[1][14+12*repump, 13+12*repump] = gs[5]
-        bCouplingMatrices[1][15+12*repump, 14+12*repump] = gs[5]
-    else
-        bCouplingMatrices[1][14+12*repump, 13+12*repump] = gs[4]
-        bCouplingMatrices[1][15+12*repump, 14+12*repump] = gs[4]
     end
 
-    bCouplingMatrices[2][1, 1] = -gs[1]
-    bCouplingMatrices[2][3, 3] = gs[1]
-    bCouplingMatrices[2][5, 5] = -gs[2]
-    bCouplingMatrices[2][7, 7] = gs[2]
-    bCouplingMatrices[2][8, 8] = -2 * gs[3]
-    bCouplingMatrices[2][9, 9] = -gs[3]
-    bCouplingMatrices[2][11, 11] = gs[3]
-    bCouplingMatrices[2][12, 12] = 2 * gs[3]
 
-    if bichrom == 1
-        bCouplingMatrices[2][13+12*repump, 13+12*repump] = -gs[4]
-        bCouplingMatrices[2][15+12*repump, 15+12*repump] = gs[4]
-        bCouplingMatrices[2][13+12*repump+4, 13+12*repump+4] = -gs[5]
-        bCouplingMatrices[2][15+12*repump+4, 15+12*repump+4] = gs[5]
-    elseif XToB == 1
-        bCouplingMatrices[2][13+12*repump, 13+12*repump] = -gs[5]
-        bCouplingMatrices[2][15+12*repump, 15+12*repump] = gs[5]
-    else
-        bCouplingMatrices[2][13+12*repump, 13+12*repump] = -gs[4]
-        bCouplingMatrices[2][15+12*repump, 15+12*repump] = gs[4]
+    function densityMatrixChangeTerms!(du, u, p, t)
+        # The meat of the program. Here's where the density matrix is actually evolved.
+
+        # user inputs (these vary, things like initial position, velocity, laser params, etc.).  These are determined by the user-chosen parameters in the main program
+        rInit = p[1]::Vector{Float64}
+        v = p[2]::Vector{Float64}
+        stateEnergyMatrix = p[3]::Matrix{Float64}
+        lasers = p[4]::Lasers
+        laserEnergy = lasers.laserEnergy
+        s0 = lasers.s0
+        polSign = lasers.polSign
+        polType = lasers.polType
+        sidebandFreqs = lasers.sidebandFreqs
+        sidebandAmps = lasers.sidebandAmps
+        laserMasks = lasers.laserMasks
+        wavenumberRatios = lasers.wavenumberRatios
+        waist = lasers.beamWaist
+        general = p[5]::GeneralSettings
+        mol = p[6]::Molecule
+        bToHamConvert = general.bGrad * mol.normalizedBohrMag
+        bFieldSetting = general.bFieldSetting
+
+        # coupling matrices passed by user.  
+        coupleMat1 = p[7]::Matrix{Float64}
+        coupleMat2 = p[8]::Matrix{Float64}
+        coupleMat3 = p[9]::Matrix{Float64}
+        bCoupleMat1 = p[10]::Matrix{Float64}
+        bCoupleMat2 = p[11]::Matrix{Float64}
+        bCoupleMat3 = p[12]::Matrix{Float64}
+
+        # coupling matrices used in decay calc
+        coupleMatEff1 = p[13]::Matrix{ComplexF64}
+        coupleMatEff2 = p[14]::Matrix{ComplexF64}
+        coupleMatEff3 = p[15]::Matrix{ComplexF64}
+
+        # decay 'masks' used in calculating the decay term.  
+        decayMaskAllButTopLeft = p[16]::Matrix{Float64}
+        decayMaskForCalcTopLeft = p[17]::Matrix{Int64}
+
+        # pre-cached r Array
+        r = p[18]::Vector{Float64}
+
+        # pre-cached matrices for atom light term.  
+        fieldTerms = p[19]::Vector{Vector{ComplexF64}}
+        atomLightTerm = p[20]::Matrix{ComplexF64}
+        atomLightTerm = zeros(ComplexF64, size(coupleMat1,1), size(coupleMat1,2))
+        
+        # pre-cached matrices for b field term. 
+        bFieldTerms = p[21]::Vector{ComplexF64}
+        bFieldTermFull = p[22]::Matrix{ComplexF64}
+        uProdBField = p[23]::Matrix{ComplexF64}
+        bFieldProdU = p[24]::Matrix{ComplexF64}
+
+        # pre-cached matrices for decay term
+        decayFull = p[25]::Matrix{ComplexF64}
+        pOnlyExcitedStates = p[26]::Matrix{ComplexF64}
+        pTopLeft1PreMult = p[27]::Matrix{ComplexF64}
+        pTopLeft2PreMult = p[28]::Matrix{ComplexF64}
+        pTopLeft3PreMult = p[29]::Matrix{ComplexF64}
+        pTopLeft1 = p[30]::Matrix{ComplexF64}
+        pTopLeft2 = p[31]::Matrix{ComplexF64}
+        pTopLeft3 = p[32]::Matrix{ComplexF64}
+
+        # 1) evolve position
+        propR!(r, rInit, v, t)
+
+        # 2) Calculate field terms at new position
+        makeFieldTerms!(fieldTerms, r, polSign, polType, wavenumberRatios, waist)
+
+        # 3)calculate -E dot D term (see Eq 21 of writeup)
+        for i in eachindex(s0)
+            atomLightTerm .= atomLightTerm .+ sqrt(s0[i]/8) .* -exp(im * laserEnergy[i] * t + im * sidebandAmps[i] * sin(sidebandFreqs[i] * t)) .* laserMasks[i] .* ((fieldTerms[i][1] .* coupleMat1) .+
+            (fieldTerms[i][2] .* coupleMat2) .+ (fieldTerms[i][3] .* coupleMat3))
+        end
+        atomLightTerm .= atomLightTerm .* exp.(im * t .* stateEnergyMatrix) # subtracts relevant hyperfine energies from 'laserEnergy'
+        atomLightTerm .= atomLightTerm .+ atomLightTerm' # needed here because, the way coupleMat is defined, 'atomLightTerm' up til now only has the top right half of the hermitian coupling matrix
+
+        # 4) calculate -mu dot B term (see Eq 32 of writeup)
+        makeBFieldTerms!(bFieldTerms, r, bFieldSetting)
+        bFieldTermFull .= bToHamConvert .* (bFieldTerms[1] .* bCoupleMat1 .+ bFieldTerms[2] .* bCoupleMat2 .+ bFieldTerms[3] .* bCoupleMat3) .+ atomLightTerm; # 'bTermFull' also sums the -mu dot B term with the calculated -D dot E term
+        
+        # 5) take commutator of [H,u] where u is density matrix and H = -D dot E + -mu dot B
+        mul!(uProdBField, u, bFieldTermFull); # uH
+        mul!(bFieldProdU, bFieldTermFull, u); # Hu
+
+        # 6) Take decay (aka 'coupling to reservoir') into account (Eq 46 of writeup)
+        pOnlyExcitedStates .= u .* decayMaskForCalcTopLeft
+
+        # 6A) these next 6 lines calculate the last term in eq 46 of writeup
+        coupleMatEff1 = coupleMat1 .* exp.(-im*t.*stateEnergyMatrix)
+        mul!(pTopLeft1PreMult, coupleMatEff1, pOnlyExcitedStates)
+        mul!(pTopLeft1, pTopLeft1PreMult, coupleMatEff1')
+
+        coupleMatEff2 = coupleMat2 .* exp.(-im*t.*stateEnergyMatrix)
+        mul!(pTopLeft2PreMult, coupleMatEff2, pOnlyExcitedStates)
+        mul!(pTopLeft2, pTopLeft2PreMult, coupleMatEff2')
+
+        coupleMatEff3 = coupleMat3 .* exp.(-im*t.*stateEnergyMatrix)
+        mul!(pTopLeft3PreMult, coupleMatEff3, pOnlyExcitedStates)
+        mul!(pTopLeft3, pTopLeft3PreMult, coupleMatEff3')
+
+        decayFull .= (u .* decayMaskAllButTopLeft) .+ pTopLeft1 .+ pTopLeft2 .+ pTopLeft3 # u.*decayMask term represents 1st and 2nd term of eq 46 in writeup
+
+        du .= im .* (uProdBField .- bFieldProdU) .+ decayFull # finally, add the 'Liouville' term and the decay term (Eq 1 of writeup) to step the density matrix
     end
 
-    bCouplingMatrices[3][1, 2] = -gs[1]
-    bCouplingMatrices[3][2, 3] = -gs[1]
-    bCouplingMatrices[3][5, 6] = -gs[2]
-    bCouplingMatrices[3][6, 7] = -gs[2]
-    bCouplingMatrices[3][8, 9] = -sqrt(2) * gs[3]
-    bCouplingMatrices[3][9, 10] = -sqrt(3) * gs[3]
-    bCouplingMatrices[3][10, 11] = -sqrt(3) * gs[3]
-    bCouplingMatrices[3][11, 12] = -sqrt(2) * gs[3]
 
-    if bichrom == 1
-        bCouplingMatrices[3][13+12*repump, 14+12*repump] = -gs[4]
-        bCouplingMatrices[3][14+12*repump, 15+12*repump] = -gs[4]
-        bCouplingMatrices[3][13+12*repump+4, 14+12*repump+4] = -gs[5]
-        bCouplingMatrices[3][14+12*repump+4, 15+12*repump+4] = -gs[5]
-    elseif XToB == 1
-        bCouplingMatrices[3][13+12*repump, 14+12*repump] = -gs[5]
-        bCouplingMatrices[3][14+12*repump, 15+12*repump] = -gs[5]
-    else
-        bCouplingMatrices[3][13+12*repump, 14+12*repump] = -gs[4]
-        bCouplingMatrices[3][14+12*repump, 15+12*repump] = -gs[4]
-    end
-    
-    if repump == 1
-        bCouplingMatrices[1][13:24, 13:24] = bCouplingMatrices[1][1:12, 1:12]
-        bCouplingMatrices[2][13:24, 13:24] = bCouplingMatrices[2][1:12, 1:12]
-        bCouplingMatrices[3][13:24, 13:24] = bCouplingMatrices[3][1:12, 1:12]
-    end
-end
+    # everything else here is used to calculate a force given a density matrix, see section 1.6 of writeup
 
+    function makeDFieldTerms!(dFieldTerms, r::Vector{Float64}, polSign::Vector{Int64}, polType::Vector{String}, wavenumberRatios::Vector{Float64}, waist::Float64)
+        # dfieldterms (dE/dr) will be 3x3 matrix, first element is xyz second is sig+ pi sig-
+        # fieldTerms = zeros(ComplexF64,3,1);
+        # pre conjugated, just like 'makeFieldTerms'
 
-function propR!(r, rInit::Vector{Float64}, v::Vector{Float64}, t::Float64)
-    r[1] = rInit[1] + v[1] * t
-    r[2] = rInit[2] + v[2] * t
-    r[3] = rInit[3] + v[3] * t
-end
-
-
-function makeFieldTerms!(fieldTerms, r::Vector{Float64}, polSign::Vector{Int64}, polType::Vector{String}, wavenumberRatios::Vector{Float64}, waist::Float64) 
-    # These are different for 2D MOT
-    # returns 'field terms' for all lasers. Field terms depend on the polarization type (and, if \sigma +/-, the sign)
-    # This is basically the field for laser [i] due to the 6 (if 3D), or 1 (for Slower/push), or 4 (for all 2D lasers) passes of the beam expressed in the standard \sigma^- ([i][1]), \pi ([i][2]) and \sigma^+ ([i][3])
-    # This is calculated in the way illustrated in JOSAB 6(11) 2023-2045 (1989) by Cohen-Tannoudji + Dalibard section 2.  See also Eq15-16 and subsequent expressions in my writeup for the 3D example.
-
-    # IMPORTANT CAVEAT: all terms are 'pre-conjugated' since only the complex conjugate of this term is ever used (Eq 21 of my writeup).  Better to just express it pre-conjugated instead of 
-    # repeatedly taking conjugates in the diff-eq solver
-
-    for i = 1:length(polSign) # iterate through all lasers
-        if polType[i] == "Slower" 
+        for i = 1:length(polSign) 
+            # iterates through all lasers
             # polarization vs position for a given laser depends on whether it a "3D\sig\sig", "2D\sig\sig", slower, etc.
-            fieldTerms[i][1] = 1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) + im * sin(r[3] * wavenumberRatios[i]))
-            fieldTerms[i][2] = 0
-            fieldTerms[i][3] = -1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) + im * sin(r[3] * wavenumberRatios[i]))
+            if polType[i] == "Slower" 
+                dFieldTerms[i][1, 1] = 0
+                dFieldTerms[i][1, 2] = 0
+                dFieldTerms[i][1, 3] = 0
 
-        elseif polType[i] == "Push"
-            fieldTerms[i][1] = 1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) - im * sin(r[3] * wavenumberRatios[i]))
-            fieldTerms[i][2] = 0
-            fieldTerms[i][3] = -1/sqrt(2) * (cos(r[3] * wavenumberRatios[i]) - im * sin(r[3] * wavenumberRatios[i]))
+                dFieldTerms[i][2, 1] = 0
+                dFieldTerms[i][2, 2] = 0
+                dFieldTerms[i][2, 3] = 0
 
-        elseif polType[i] == "2DSS"
-            fieldTerms[i][1] = polSign[i] * sin(r[1] * wavenumberRatios[i]) + im * cos(r[2] * wavenumberRatios[i])
-            fieldTerms[i][2] = sqrt(2) * im * (cos(r[1] * wavenumberRatios[i]) - polSign[i]*sin(r[2] * wavenumberRatios[i]))
-            fieldTerms[i][3] = polSign[i] * sin(r[1] * wavenumberRatios[i]) - im * cos(r[2] * wavenumberRatios[i])
+                dFieldTerms[i][3, 1] = 1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) + im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
+                dFieldTerms[i][3, 2] = 0
+                dFieldTerms[i][3, 3] = -1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) + im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
 
-        elseif polType[i] == "2DPerp"
-            fieldTerms[i][1] = -sqrt(2) * im * cos(r[1] * wavenumberRatios[i])
-            fieldTerms[i][2] = 2 * cos(r[2] * wavenumberRatios[i])
-            fieldTerms[i][3] = -sqrt(2) * im * cos(r[1] * wavenumberRatios[i])
+            elseif polType[i] == "Push"
+                dFieldTerms[i][1, 1] = 0
+                dFieldTerms[i][1, 2] = 0
+                dFieldTerms[i][1, 3] = 0
 
-        elseif polType[i] == "2DPar"
-            fieldTerms[i][1] = 0
-            fieldTerms[i][2] = 2 * (cos(r[2] * wavenumberRatios[i])+cos(r[1] * wavenumberRatios[i]))
-            fieldTerms[i][3] = 0
+                dFieldTerms[i][2, 1] = 0
+                dFieldTerms[i][2, 2] = 0
+                dFieldTerms[i][2, 3] = 0
 
-        elseif polType[i] == "3D"
-            fieldTerms[i][1] = cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) .+ polSign[i] * sin(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) .-
-             im * (polSign[i] * sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) .- cos(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2))
+                dFieldTerms[i][3, 1] = 1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) - im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
+                dFieldTerms[i][3, 2] = 0
+                dFieldTerms[i][3, 3] = -1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) - im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
+
+            elseif polType[i] == "2DSS"
+                dFieldTerms[i][1, 1] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][1, 2] = -sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][1, 3] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
+
+                dFieldTerms[i][2, 1] = -im * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][2, 2] = -sqrt(2) * im * (polSign[i] * cos(r[2] * wavenumberRatios[i])) * wavenumberRatios[i]
+                dFieldTerms[i][2, 3] = im * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
+
+                dFieldTerms[i][3, 1] = 0
+                dFieldTerms[i][3, 2] = 0
+                dFieldTerms[i][3, 3] = 0
+
+            elseif polType[i] == "2DPerp"
+                dFieldTerms[i][1, 1] = sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][1, 2] = 0
+                dFieldTerms[i][1, 3] = sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
+
+                dFieldTerms[i][2, 1] = 0
+                dFieldTerms[i][2, 2] = -2 * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][2, 3] = 0
+
+                dFieldTerms[i][3, 1] = 0
+                dFieldTerms[i][3, 2] = 0
+                dFieldTerms[i][3, 3] = 0
+
+            elseif polType[i] == "2DPar"
+                dFieldTerms[i][1, 1] = 0
+                dFieldTerms[i][1, 2] = -2 * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][1, 3]=0
+
+                dFieldTerms[i][2, 1] = 0
+                dFieldTerms[i][2, 2] = -2 * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
+                dFieldTerms[i][2, 3] = 0
+
+                dFieldTerms[i][3, 1] = 0
+                dFieldTerms[i][3, 2] = 0
+                dFieldTerms[i][3, 3] = 0
+
+            elseif polType[i] == "3D"
+                dFieldTerms[i][1, 1] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
+                dFieldTerms[i][1, 2] = -sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
+                dFieldTerms[i][1, 3] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
+
+                dFieldTerms[i][2, 1] = -im * sin(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
+                dFieldTerms[i][2, 2] = sqrt(2) * im * (polSign[i] * cos(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2)) * wavenumberRatios[i]
+                dFieldTerms[i][2, 3] = im * (sin(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2)) * wavenumberRatios[i]
         
-            fieldTerms[i][2] = sqrt(2) * im * (cos(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) .+
-             polSign[i] * sin(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2))
-        
-            fieldTerms[i][3] = cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) .+ polSign[i] * sin(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) .+
-             im * (polSign[i] * sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) - cos(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2))
-        else
-            throw(ArgumentError("Invalid polType value: $polType. It must be one of ['Slower', 'Push', '2DSS', '2DPerp', '2DPar', '3D']."))
+                dFieldTerms[i][3, 1] = (-sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) - im * (polSign[i] * cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2))) * wavenumberRatios[i]
+                dFieldTerms[i][3, 2] = 0
+                dFieldTerms[i][3, 3] = (-sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) + im * (polSign[i] * cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2))) * wavenumberRatios[i]
+            else
+                throw(ArgumentError("Invalid polType value: $polType. It must be one of ['Slower', 'Push', '2DSS', '2DPerp', '2DPar', '3D']."))
+            end
         end
     end
-end
 
-    
-function makeBFieldTerms!(bFieldTerms::Vector{ComplexF64}, r::Vector{Float64}, bFieldSetting::String)
-    # expresses B field at position r in the \sigma^+/-, pi basis
-    
-    if bFieldSetting == "TwoD"
-        bFieldTerms[1] = 1 / sqrt(2) * (r[1] - im * r[2])
-        bFieldTerms[2] = -0 * (r[3])
-        bFieldTerms[3] = 1 / sqrt(2) * (-r[1] - im * r[2])
-    elseif bFieldSetting == "ThreeD"
-        bFieldTerms[1] = 1 / sqrt(2) * (r[1] + im * r[2])
-        bFieldTerms[2] = -1 * (r[3]) # note: really this should be -2r[3] for a quadropole field.  In practice, I prefer to run my f(r) for random direction at constant B.  So, assume \tilde{r}=(x,y,z/2).
-        bFieldTerms[3] = 1 / sqrt(2) * (-r[1] + im * r[2])
-    elseif bFieldSetting == "Static"
-        bFieldTerms[1] = (im+1)/2
-        bFieldTerms[2] = 0
-        bFieldTerms[3] = (-1+im)/2
-        # bFieldTerms[1] = 0
-        # bFieldTerms[2] = 1
-        # bFieldTerms[3] = 0
-    else
-        throw(ArgumentError("Invalid bFieldSetting value: $bFieldSetting. It must be one of ['ThreeD', 'TwoD', 'Static']."))
+
+    function forceCalc!(force, dFieldTerms::Vector{Matrix{ComplexF64}}, rho::Matrix{ComplexF64}, 
+        lasers::Lasers, couplingMatrices::Vector{Matrix}, stateEnergyMatrix::Matrix{Float64}, t::Float64)
+        # calculates force given position and lasers (used to calculate dFieldTerms) and density matrix \rho.  
+        # Both r(t) and \rho(t) are recorded vs time by the OBE solver, so this runs afterwards to calculate what forces the particle experienced over the trajectory
+
+        s0 = lasers.s0
+        sidebandFreqs = lasers.sidebandFreqs
+        sidebandAmps = lasers.sidebandAmps
+        laserMasks = lasers.laserMasks
+        laserEnergy = lasers.laserEnergy
+
+        # force pre-factor is calculated for each laser [i]. Has the rotating-frame frequency exponent + phase modulation term + intensity term \sqrt(s0/8). Hyperfine energies are subtracted later
+        forcePrefactor = zeros(ComplexF64, 1, length(laserEnergy))
+        for i in eachindex(laserEnergy)
+            forcePrefactor[i] = sqrt(s0[i] / 8) * exp(im * laserEnergy[i] * t + im * sidebandAmps[i] * sin(sidebandFreqs[i] * t))
+        end
+
+        # calculate x force. Implements Eq 48 of main writeup
+        dRhoDPosCalcMatrix = zeros(ComplexF64, size(rho, 1), size(rho, 2))
+        dRhoDPosTimesDensityMatContainer = zeros(ComplexF64, size(rho, 1), size(rho, 2))
+        for i = 1:length(laserEnergy)
+            dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ forcePrefactor[i] * (dFieldTerms[i][1,1] * couplingMatrices[1] .+ dFieldTerms[i][1,2] * couplingMatrices[2] .+ dFieldTerms[i][1,3] * couplingMatrices[3]) .* laserMasks[i]
+        end
+        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .* exp.(im*t.*stateEnergyMatrix)
+        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ dRhoDPosCalcMatrix'
+        mul!(dRhoDPosTimesDensityMatContainer, rho, dRhoDPosCalcMatrix) # multiplies dp_{x}/dt by density matrix \rho
+        force[1] = real(tr(dRhoDPosTimesDensityMatContainer)) # takes trace of \rho*dp_{x}/dt to determine average force over enemble (Eq 49 of writeup)
+
+        # similarly, calculate y and z force
+        dRhoDPosCalcMatrix = zeros(ComplexF64, size(rho, 1), size(rho, 2))
+        for i = 1:length(laserEnergy)
+            dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ forcePrefactor[i] * (dFieldTerms[i][2,1] * couplingMatrices[1] .+ dFieldTerms[i][2,2] * couplingMatrices[2] .+ dFieldTerms[i][2,3] * couplingMatrices[3]) .* laserMasks[i]
+        end
+        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .* exp.(im*t.*stateEnergyMatrix)
+        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ dRhoDPosCalcMatrix'
+        mul!(dRhoDPosTimesDensityMatContainer, rho, dRhoDPosCalcMatrix)
+        force[2] = real(tr(dRhoDPosTimesDensityMatContainer))
+
+        dRhoDPosCalcMatrix = zeros(ComplexF64, size(rho, 1), size(rho, 2))
+        for i = 1:length(laserEnergy)
+            dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ forcePrefactor[i] * (dFieldTerms[i][3,1] * couplingMatrices[1] .+ dFieldTerms[i][3,2] * couplingMatrices[2] .+ dFieldTerms[i][3,3] * couplingMatrices[3]) .* laserMasks[i]
+        end
+        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .* exp.(im*t.*stateEnergyMatrix)
+        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ dRhoDPosCalcMatrix'
+        mul!(dRhoDPosTimesDensityMatContainer, rho, dRhoDPosCalcMatrix)
+        force[3] = real(tr(dRhoDPosTimesDensityMatContainer))
     end
-end
-
-function densityMatrixChangeTerms!(du, u, p, t)
-    # The meat of the program. Here's where the density matrix is actually evolved.
-
-    # user inputs (these vary, things like initial position, velocity, laser params, etc.).  These are determined by the user-chosen parameters in the main program
-    rInit = p[1]::Vector{Float64}
-    v = p[2]::Vector{Float64}
-    stateEnergyMatrix = p[3]::Matrix{Float64}
-    lasers = p[4]::Lasers
-    laserEnergy = lasers.laserEnergy
-    s0 = lasers.s0
-    polSign = lasers.polSign
-    polType = lasers.polType
-    sidebandFreqs = lasers.sidebandFreqs
-    sidebandAmps = lasers.sidebandAmps
-    laserMasks = lasers.laserMasks
-    wavenumberRatios = lasers.wavenumberRatios
-    waist = p[5]::Float64
-    bToHamConvert = p[6]::Float64
-
-    # coupling matrices passed by user.  
-    coupleMat1 = p[7]::Matrix{Float64}
-    coupleMat2 = p[8]::Matrix{Float64}
-    coupleMat3 = p[9]::Matrix{Float64}
-    bCoupleMat1 = p[10]::Matrix{Float64}
-    bCoupleMat2 = p[11]::Matrix{Float64}
-    bCoupleMat3 = p[12]::Matrix{Float64}
-
-    # coupling matrices used in decay calc
-    coupleMatEff1 = p[13]::Matrix{ComplexF64}
-    coupleMatEff2 = p[14]::Matrix{ComplexF64}
-    coupleMatEff3 = p[15]::Matrix{ComplexF64}
-
-    # decay 'masks' used in calculating the decay term.  
-    decayMaskAllButTopLeft = p[16]::Matrix{Float64}
-    decayMaskForCalcTopLeft = p[17]::Matrix{Int64}
-
-    # pre-cached r Array
-    r = p[18]::Vector{Float64}
-
-    # pre-cached matrices for atom light term.  
-    fieldTerms = p[19]::Vector{Vector{ComplexF64}}
-    atomLightTerm = p[20]::Matrix{ComplexF64}
-    atomLightTerm = zeros(ComplexF64, size(coupleMat1,1), size(coupleMat1,2))
-    
-    # pre-cached matrices for b field term. 
-    bFieldTerms = p[21]::Vector{ComplexF64}
-    bFieldTermFull = p[22]::Matrix{ComplexF64}
-    uProdBField = p[23]::Matrix{ComplexF64}
-    bFieldProdU = p[24]::Matrix{ComplexF64}
-
-    # pre-cached matrices for decay term
-    decayFull = p[25]::Matrix{ComplexF64}
-    pOnlyExcitedStates = p[26]::Matrix{ComplexF64}
-    pTopLeft1PreMult = p[27]::Matrix{ComplexF64}
-    pTopLeft2PreMult = p[28]::Matrix{ComplexF64}
-    pTopLeft3PreMult = p[29]::Matrix{ComplexF64}
-    pTopLeft1 = p[30]::Matrix{ComplexF64}
-    pTopLeft2 = p[31]::Matrix{ComplexF64}
-    pTopLeft3 = p[32]::Matrix{ComplexF64}
-
-    #Whether B-field is 3D, 2D, or static
-    bFieldSetting = p[33]::String
-
-    # 1) evolve position
-    propR!(r, rInit, v, t)
-
-    # 2) Calculate field terms at new position
-    makeFieldTerms!(fieldTerms, r, polSign, polType, wavenumberRatios, waist)
-
-    # 3)calculate -E dot D term (see Eq 21 of writeup)
-    for i = 1:length(s0)
-        atomLightTerm .= atomLightTerm .+ sqrt(s0[i]/8) .* -exp(im * laserEnergy[i] * t + im * sidebandAmps[i] * sin(sidebandFreqs[i] * t)) .* laserMasks[i] .* ((fieldTerms[i][1] .* coupleMat1) .+
-         (fieldTerms[i][2] .* coupleMat2) .+ (fieldTerms[i][3] .* coupleMat3))
-    end
-    atomLightTerm .= atomLightTerm .* exp.(im * t .* stateEnergyMatrix) # subtracts relevant hyperfine energies from 'laserEnergy'
-    atomLightTerm .= atomLightTerm .+ atomLightTerm' # needed here because, the way coupleMat is defined, 'atomLightTerm' up til now only has the top right half of the hermitian coupling matrix
-
-    # 4) calculate -mu dot B term (see Eq 32 of writeup)
-    makeBFieldTerms!(bFieldTerms, r, bFieldSetting)
-    bFieldTermFull .= bToHamConvert .* (bFieldTerms[1] .* bCoupleMat1 .+ bFieldTerms[2] .* bCoupleMat2 .+ bFieldTerms[3] .* bCoupleMat3) .+ atomLightTerm; # 'bTermFull' also sums the -mu dot B term with the calculated -D dot E term
-    
-    # 5) take commutator of [H,u] where u is density matrix and H = -D dot E + -mu dot B
-    mul!(uProdBField, u, bFieldTermFull); # uH
-    mul!(bFieldProdU, bFieldTermFull, u); # Hu
-
-    # 6) Take decay (aka 'coupling to reservoir') into account (Eq 46 of writeup)
-    pOnlyExcitedStates .= u .* decayMaskForCalcTopLeft
-
-    # 6A) these next 6 lines calculate the last term in eq 46 of writeup
-    coupleMatEff1 = coupleMat1 .* exp.(-im*t.*stateEnergyMatrix)
-    mul!(pTopLeft1PreMult, coupleMatEff1, pOnlyExcitedStates)
-    mul!(pTopLeft1, pTopLeft1PreMult, coupleMatEff1')
-
-    coupleMatEff2 = coupleMat2 .* exp.(-im*t.*stateEnergyMatrix)
-    mul!(pTopLeft2PreMult, coupleMatEff2, pOnlyExcitedStates)
-    mul!(pTopLeft2, pTopLeft2PreMult, coupleMatEff2')
-
-    coupleMatEff3 = coupleMat3 .* exp.(-im*t.*stateEnergyMatrix)
-    mul!(pTopLeft3PreMult, coupleMatEff3, pOnlyExcitedStates)
-    mul!(pTopLeft3, pTopLeft3PreMult, coupleMatEff3')
-
-    decayFull .= (u .* decayMaskAllButTopLeft) .+ pTopLeft1 .+ pTopLeft2 .+ pTopLeft3 # u.*decayMask term represents 1st and 2nd term of eq 46 in writeup
-
-    du .= im .* (uProdBField .- bFieldProdU) .+ decayFull # finally, add the 'Liouville' term and the decay term (Eq 1 of writeup) to step the density matrix
-end
 
 
-# everything else here is used to calculate a force given a density matrix, see section 1.6 of writeup
+    function makeForceVsTime!(forceVsTime, times::Vector{Float64}, rhos::Vector{Matrix{ComplexF64}},
+        lasers::Lasers, couplingMatrices::Vector{Matrix}, 
+        stateEnergyMatrix::Matrix{Float64}, rInit::Vector{Float64}, v::Vector{Float64})
+        # given a set of times, an initial position and velocity, the lasers used, and \rho(t), calculate force vs t
 
-function makeDFieldTerms!(dFieldTerms, r::Vector{Float64}, polSign::Vector{Int64}, polType::Vector{String}, wavenumberRatios::Vector{Float64}, waist::Float64)
-    # dfieldterms (dE/dr) will be 3x3 matrix, first element is xyz second is sig+ pi sig-
-    # fieldTerms = zeros(ComplexF64,3,1);
-    # pre conjugated, just like 'makeFieldTerms'
+        polSign = lasers.polSign
+        polType = lasers.polType
+        wavenumberRatios = lasers.wavenumberRatios
+        waist = lasers.beamWaist
 
-    for i = 1:length(polSign) 
-        # iterates through all lasers
-        # polarization vs position for a given laser depends on whether it a "3D\sig\sig", "2D\sig\sig", slower, etc.
-        if polType[i] == "Slower" 
-            dFieldTerms[i][1, 1] = 0
-            dFieldTerms[i][1, 2] = 0
-            dFieldTerms[i][1, 3] = 0
+        # initialize some stuff
+        dFieldContainer = Array{Matrix{ComplexF64}, 1}(undef, length(polSign))
+        for i = 1:length(polSign)
+            dFieldContainer[i] = zeros(ComplexF64, 3, 3)
+        end
+        forceCalcContainer = zeros(ComplexF64, 3, 1)
+        r = Vector{Float64}(undef, 3)
 
-            dFieldTerms[i][2, 1] = 0
-            dFieldTerms[i][2, 2] = 0
-            dFieldTerms[i][2, 3] = 0
-
-            dFieldTerms[i][3, 1] = 1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) + im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
-            dFieldTerms[i][3, 2] = 0
-            dFieldTerms[i][3, 3] = -1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) + im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
-
-        elseif polType[i] == "Push"
-            dFieldTerms[i][1, 1] = 0
-            dFieldTerms[i][1, 2] = 0
-            dFieldTerms[i][1, 3] = 0
-
-            dFieldTerms[i][2, 1] = 0
-            dFieldTerms[i][2, 2] = 0
-            dFieldTerms[i][2, 3] = 0
-
-            dFieldTerms[i][3, 1] = 1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) - im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
-            dFieldTerms[i][3, 2] = 0
-            dFieldTerms[i][3, 3] = -1/sqrt(2) * (-sin(r[3] * wavenumberRatios[i]) - im * cos(r[3] * wavenumberRatios[i])) * wavenumberRatios[i]
-
-        elseif polType[i] == "2DSS"
-            dFieldTerms[i][1, 1] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][1, 2] = -sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][1, 3] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
-
-            dFieldTerms[i][2, 1] = -im * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][2, 2] = -sqrt(2) * im * (polSign[i] * cos(r[2] * wavenumberRatios[i])) * wavenumberRatios[i]
-            dFieldTerms[i][2, 3] = im * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
-
-            dFieldTerms[i][3, 1] = 0
-            dFieldTerms[i][3, 2] = 0
-            dFieldTerms[i][3, 3] = 0
-
-        elseif polType[i] == "2DPerp"
-            dFieldTerms[i][1, 1] = sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][1, 2] = 0
-            dFieldTerms[i][1, 3] = sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
-
-            dFieldTerms[i][2, 1] = 0
-            dFieldTerms[i][2, 2] = -2 * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][2, 3] = 0
-
-            dFieldTerms[i][3, 1] = 0
-            dFieldTerms[i][3, 2] = 0
-            dFieldTerms[i][3, 3] = 0
-
-        elseif polType[i] == "2DPar"
-            dFieldTerms[i][1, 1] = 0
-            dFieldTerms[i][1, 2] = -2 * sin(r[1] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][1, 3]=0
-
-            dFieldTerms[i][2, 1] = 0
-            dFieldTerms[i][2, 2] = -2 * sin(r[2] * wavenumberRatios[i]) * wavenumberRatios[i]
-            dFieldTerms[i][2, 3] = 0
-
-            dFieldTerms[i][3, 1] = 0
-            dFieldTerms[i][3, 2] = 0
-            dFieldTerms[i][3, 3] = 0
-
-        elseif polType[i] == "3D"
-            dFieldTerms[i][1, 1] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
-            dFieldTerms[i][1, 2] = -sqrt(2) * im * sin(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
-            dFieldTerms[i][1, 3] = polSign[i] * cos(r[1] * wavenumberRatios[i]) * exp(-2*(r[2]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
-
-            dFieldTerms[i][2, 1] = -im * sin(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2) * wavenumberRatios[i]
-            dFieldTerms[i][2, 2] = sqrt(2) * im * (polSign[i] * cos(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2)) * wavenumberRatios[i]
-            dFieldTerms[i][2, 3] = im * (sin(r[2] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[3]^2)/waist^2)) * wavenumberRatios[i]
-    
-            dFieldTerms[i][3, 1] = (-sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) - im * (polSign[i] * cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2))) * wavenumberRatios[i]
-            dFieldTerms[i][3, 2] = 0
-            dFieldTerms[i][3, 3] = (-sin(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2) + im * (polSign[i] * cos(r[3] * wavenumberRatios[i]) * exp(-2*(r[1]^2+r[2]^2)/waist^2))) * wavenumberRatios[i]
-        else
-            throw(ArgumentError("Invalid polType value: $polType. It must be one of ['Slower', 'Push', '2DSS', '2DPerp', '2DPar', '3D']."))
+        # iterate through time, propegating r in the same way done in the OBEs.  Then determine force experienced given r(t), \rho(t), and the lasers used
+        for i = 1:length(times)
+            propR!(r, rInit, v, times[i])
+            makeDFieldTerms!(dFieldContainer, r, polSign,polType, wavenumberRatios, waist)
+            forceCalc!(forceCalcContainer, dFieldContainer, rhos[i], lasers, couplingMatrices, stateEnergyMatrix, times[i])
+            forceVsTime[i, :] = forceCalcContainer
         end
     end
-end
 
-
-function forceCalc!(force, dFieldTerms::Vector{Matrix{ComplexF64}}, rho::Matrix{ComplexF64}, 
-    lasers::Lasers, couplingMatrices::Vector{Matrix}, stateEnergyMatrix::Matrix{Float64}, t::Float64)
-    # calculates force given position and lasers (used to calculate dFieldTerms) and density matrix \rho.  
-    # Both r(t) and \rho(t) are recorded vs time by the OBE solver, so this runs afterwards to calculate what forces the particle experienced over the trajectory
-
-    s0 = lasers.s0
-    sidebandFreqs = lasers.sidebandFreqs
-    sidebandAmps = lasers.sidebandAmps
-    laserMasks = lasers.laserMasks
-    laserEnergy = lasers.laserEnergy
-
-    # force pre-factor is calculated for each laser [i]. Has the rotating-frame frequency exponent + phase modulation term + intensity term \sqrt(s0/8). Hyperfine energies are subtracted later
-    forcePrefactor = zeros(ComplexF64, 1, length(laserEnergy))
-    for i = 1:length(laserEnergy)
-        forcePrefactor[i] = sqrt(s0[i] / 8) * exp(im * laserEnergy[i] * t + im * sidebandAmps[i] * sin(sidebandFreqs[i] * t))
-    end
-
-    # calculate x force. Implements Eq 48 of main writeup
-    dRhoDPosCalcMatrix = zeros(ComplexF64, size(rho, 1), size(rho, 2))
-    dRhoDPosTimesDensityMatContainer = zeros(ComplexF64, size(rho, 1), size(rho, 2))
-    for i = 1:length(laserEnergy)
-        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ forcePrefactor[i] * (dFieldTerms[i][1,1] * couplingMatrices[1] .+ dFieldTerms[i][1,2] * couplingMatrices[2] .+ dFieldTerms[i][1,3] * couplingMatrices[3]) .* laserMasks[i]
-    end
-    dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .* exp.(im*t.*stateEnergyMatrix)
-    dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ dRhoDPosCalcMatrix'
-    mul!(dRhoDPosTimesDensityMatContainer, rho, dRhoDPosCalcMatrix) # multiplies dp_{x}/dt by density matrix \rho
-    force[1] = real(tr(dRhoDPosTimesDensityMatContainer)) # takes trace of \rho*dp_{x}/dt to determine average force over enemble (Eq 49 of writeup)
-
-    # similarly, calculate y and z force
-    dRhoDPosCalcMatrix = zeros(ComplexF64, size(rho, 1), size(rho, 2))
-    for i = 1:length(laserEnergy)
-        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ forcePrefactor[i] * (dFieldTerms[i][2,1] * couplingMatrices[1] .+ dFieldTerms[i][2,2] * couplingMatrices[2] .+ dFieldTerms[i][2,3] * couplingMatrices[3]) .* laserMasks[i]
-    end
-    dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .* exp.(im*t.*stateEnergyMatrix)
-    dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ dRhoDPosCalcMatrix'
-    mul!(dRhoDPosTimesDensityMatContainer, rho, dRhoDPosCalcMatrix)
-    force[2] = real(tr(dRhoDPosTimesDensityMatContainer))
-
-    dRhoDPosCalcMatrix = zeros(ComplexF64, size(rho, 1), size(rho, 2))
-    for i = 1:length(laserEnergy)
-        dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ forcePrefactor[i] * (dFieldTerms[i][3,1] * couplingMatrices[1] .+ dFieldTerms[i][3,2] * couplingMatrices[2] .+ dFieldTerms[i][3,3] * couplingMatrices[3]) .* laserMasks[i]
-    end
-    dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .* exp.(im*t.*stateEnergyMatrix)
-    dRhoDPosCalcMatrix .= dRhoDPosCalcMatrix .+ dRhoDPosCalcMatrix'
-    mul!(dRhoDPosTimesDensityMatContainer, rho, dRhoDPosCalcMatrix)
-    force[3] = real(tr(dRhoDPosTimesDensityMatContainer))
-end
-
-
-function makeForceVsTime!(forceVsTime, times::Vector{Float64}, rhos::Vector{Matrix{ComplexF64}},
-    lasers::Lasers, couplingMatrices::Vector{Matrix}, 
-    stateEnergyMatrix::Matrix{Float64}, waist::Float64, rInit::Vector{Float64}, v::Vector{Float64})
-    # given a set of times, an initial position and velocity, the lasers used, and \rho(t), calculate force vs t
-
-    polSign = lasers.polSign
-    polType = lasers.polType
-    wavenumberRatios = lasers.wavenumberRatios
-
-    #initialize some stuff
-    dFieldContainer = Array{Matrix{ComplexF64}, 1}(undef, length(polSign))
-    for i = 1:length(polSign)
-        dFieldContainer[i] = zeros(ComplexF64, 3, 3)
-    end
-    forceCalcContainer = zeros(ComplexF64, 3, 1)
-    r = Vector{Float64}(undef, 3)
-
-    #iterate through time, propegating r in the same way done in the OBEs.  Then determine force experienced given r(t), \rho(t), and the lasers used
-    for i = 1:length(times)
-        propR!(r, rInit, v, times[i])
-        makeDFieldTerms!(dFieldContainer, r, polSign,polType, wavenumberRatios, waist)
-        forceCalc!(forceCalcContainer, dFieldContainer, rhos[i], lasers, couplingMatrices, stateEnergyMatrix, times[i])
-        forceVsTime[i, :] = forceCalcContainer
-    end
 end

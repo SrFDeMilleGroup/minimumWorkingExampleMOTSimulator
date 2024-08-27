@@ -1,11 +1,12 @@
-# unit of energy: hbar * Gamma
-# unit of velocity: Gamma / k, where k is the wavevector
-# unit of time: 1 / Gamma
-# unit of length: 1 / k (= wavelength / 2pi)
-# unit of force: 1e-3 * hbar * Gamma * k (??)
-
-
 module moleculeVariables
+
+    """
+    unit of energy: hbar * Gamma
+    unit of velocity: Gamma / k, where k is the wavevector
+    unit of time: 1 / Gamma
+    unit of length: 1 / k (= wavelength / 2pi)
+    unit of force: 1e-3 * hbar * Gamma * k (??)
+    """
 
     export Molecule, SrF, CaF, BaF, MgF, CaOH, SrOH
 
