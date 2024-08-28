@@ -24,7 +24,7 @@ or static "Static" (2D transverse slowing primarily, could also use to simulate 
 
 
 # A) parameters for quick test of restoring force
-numTrialsPerValueSet::Int64 = 2
+numTrialsPerValueSet::Int64 = 100
 # displacementsInMM::Vector{Float64} = [0.5, 1.5, 3.0, 4.5, 6.0, 7.5]
 displacementsInMM::Vector{Float64} = [0.5, 3.0]
 initDispDir::String = "XY"

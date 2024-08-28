@@ -42,30 +42,31 @@ include("auxFunctions/obeEvaluation.jl") # supplementary functions
 using .obeEvaluation: densityMatrixChangeTerms!
 
 include("auxFunctions/forceCalculation.jl") # supplementary functions
-using . forceCalculation: makeForceVsTime!
+using .forceCalculation: makeForceVsTime!
  
 #6) Stuff for setting up simulation based on user's choices
 # stuff needed to determine minimum number of states, and which coupling terms to use, and which lasers actually 'use' a given coupling term (see 'laserMasks')
 (couplingMatrices, bCouplingMatrices, stateEnergyMatrix, numZeemanStatesGround, numZeemanStatesExcited) = createCouplingTermsandLaserMasks(lasers, mol)
 numZeemanStatesTotal = numZeemanStatesGround + numZeemanStatesExcited
 
-rInit = [0., 0., 0.] # placehold not used
-vInit = [0., 0., 0.] # placehold not used
+rInit = [0., 0., 0.] # initial position, placehold not used
+vel = [0., 0., 0.] # velocity, placehold not used
 
 # note: p will include a lot of pre-allocated stuff.  This is basically all of the stuff 'passed to' the obe solver, in addition to the initial condition of the density matrix defined below
 # in retrospect p is not the best choice for the variable name but it's the julia house style...maybe replace later. (actually you can't. Julia forces ODEProblem to have a variable 'p')
 pPreInitialized = preInitializer(lasers, numZeemanStatesGround, numZeemanStatesTotal)
 
-p = [rInit, vInit, stateEnergyMatrix, lasers, general, mol,
+p = [rInit, vel, stateEnergyMatrix, lasers, general, mol,
     couplingMatrices[1], couplingMatrices[2], couplingMatrices[3], bCouplingMatrices[1], bCouplingMatrices[2], bCouplingMatrices[3]]
 append!(p, pPreInitialized)
+p = Tuple(p)
 
 # initial value of density matrix
 pStart = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 pStart[1:12, 1:12] = Matrix(I, 12, 12) ./ 12 # molecules equally populate X N=1 states
 
 # initialize a bunch of different storage variables for simulation of force vs speed at various displacements
-forceVsTime = Array{Array{ComplexF64,2},1}(undef, general.numTrialsPerValueSet * 2)
+forceVsTime = Vector{Matrix{ComplexF64}}(undef, general.numTrialsPerValueSet * 2)
 forceVsSpeed = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2) # a \dot v/|v|
 forceVsPos = SharedArray{Float64}(length(general.userSpeeds), general.numTrialsPerValueSet * 2) # a \dot r/|r|
 

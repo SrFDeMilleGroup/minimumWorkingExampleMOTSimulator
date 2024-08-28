@@ -13,7 +13,7 @@ module obeInitialization
     myRNG = Xoshiro(123) 
 
 
-    function preInitializer(lasers::Lasers, numZeemanStatesGround, numZeemanStatesTotal)
+    function preInitializer(lasers::Lasers, numZeemanStatesGround::Int64, numZeemanStatesTotal::Int64)
         # initializes a bunch of stuff used in the OBE solver.  Julia likes things pre-initialized if possible
 
         # holds the modified coupling matrices used in decay terms
@@ -22,7 +22,7 @@ module obeInitialization
         coupleMatEff3 = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
 
         # convenient for fast evaluation of terms used in the 'decay' term of the density matrix evolution (second term in eq 1 of main writeup)
-        decayMaskAllButTopLeft = zeros(Float64, numZeemanStatesTotal, numZeemanStatesTotal);
+        decayMaskAllButTopLeft = zeros(Float64, numZeemanStatesTotal, numZeemanStatesTotal)
         decayMaskAllButTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, (numZeemanStatesGround+1):numZeemanStatesTotal] .= -1
         decayMaskAllButTopLeft[1:numZeemanStatesGround, (numZeemanStatesGround+1):numZeemanStatesTotal] .= -1 / 2
         decayMaskAllButTopLeft[(numZeemanStatesGround+1):numZeemanStatesTotal, 1:numZeemanStatesGround] .= -1 / 2
@@ -65,7 +65,7 @@ module obeInitialization
     end
 
 
-    function generateRandPosAndVel(general::GeneralSettings, currDisp, currSpeed, vRound, longSpeed, mol::Molecule)
+    function generateRandPosAndVel(general::GeneralSettings, currDisp::Float64, currSpeed::Float64, vRound::Float64, longSpeed::Float64, mol::Molecule)
         # Function generates a set of random positions and 'pseudo'-random velocities (direction determined by 'velDirRelToR' + whether 'force profile' is 2D or 3D.)
         # if forceProfile is TwoD: z position is assumed to not matter, z velocity is fixed to longSpeed, and direction of velocity relative to random choice of \phi where x=disp*(cos(\phi)), etc. determined by velDirRelToR
         # if forceProfile is ThreeD: longSpeed isn't used, and direction of velocity chosen relative to random x,y,z direction of position is determined by velDirRelToR
@@ -169,13 +169,13 @@ module obeInitialization
         # velocity along any dimension cannot be zero (particle should have x,y,z all change throughout OBE evolution to ensure periodicity)
         for i = 1:numTrialsPerSpeed*2
             if randVxs[i] == 0
-                randVxs[i] = vRound * sign(rand(myRNG) - 0.5)
+                randVxs[i] = vRound * rand(myRNG, [-1, 1])
             end
             if randVys[i] == 0
-                randVys[i] = vRound * sign(rand(myRNG) - 0.5)
+                randVys[i] = vRound * rand(myRNG, [-1, 1])
             end
             if randVzs[i] == 0
-                randVzs[i] = vRound * sign(rand(myRNG) - 0.5)
+                randVzs[i] = vRound * rand(myRNG, [-1, 1])
             end
         end
         
@@ -196,9 +196,9 @@ module obeInitialization
         # 3 (cont)) Terms C_{B,i,j} are zero unless i and j are in same F manifold.  size of matrix determined by number of excited states and ground states needed.  C_{B,i,j}[k] is the coupling from i->j for <B\cdot p_{k}>/|B|, where p_{k} is the \sigma^-/+,\pi basis
 
         #1)
-        bichrom = (("XA" in lasers.whichTransition) && ("XB" in lasers.whichTransition)) ? 1 : 0 # winds up 0 if only XA of XB are used, 1 if both are
-        XToB = (!("XA" in lasers.whichTransition) && ("XB" in lasers.whichTransition)) ? 1 : 0 # winds up 1 if only lasers are XB
-        repump = ("XARepump" in lasers.whichTransition) ? 1 : 0 # winds up 0 if no repump, 1 if there are repumps
+        bichrom::Int64 = (("XA" in lasers.whichTransition) && ("XB" in lasers.whichTransition)) ? 1 : 0 # winds up 0 if only XA of XB are used, 1 if both are
+        XToB::Int64 = (!("XA" in lasers.whichTransition) && ("XB" in lasers.whichTransition)) ? 1 : 0 # winds up 1 if only lasers are XB
+        repump::Int64 = ("XARepump" in lasers.whichTransition) ? 1 : 0 # winds up 0 if no repump, 1 if there are repumps
 
         numZeemanStatesGround = 12 + 12 * repump
         numZeemanStatesExcited = 4 + 4 * bichrom
