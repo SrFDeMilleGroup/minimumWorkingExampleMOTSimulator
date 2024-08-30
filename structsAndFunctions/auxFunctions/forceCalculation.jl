@@ -3,9 +3,7 @@ module forceCalculation
     using LinearAlgebra: tr, mul!
     using Random: Xoshiro
 
-    using ..moleculeVariables: Molecule
-    using ..laserSettings: Lasers
-    using ..generalSettings: GeneralSettings
+    using ...structs: Molecule, Lasers, GeneralSettings # each successive . leads to the parent of the current module
 
     export makeForceVsTime!
 

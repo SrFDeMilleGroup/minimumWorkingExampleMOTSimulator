@@ -1,56 +1,9 @@
 module laserSettings
 
-    using ..moleculeVariables: Molecule # each successive . leads to the parent of the current module
+    using ..structs: Molecule, Lasers # each successive . leads to the parent of the current module
 
-    # include("../simulationSettings/laserSettings.jl")
-    # using .laserSettings: s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps, beamWaistInMM
+    export generateLaserSettings
 
-    export Lasers, generateLaserSettings
-
-    """
-    s0: single laser pass peak saturation parameter.  I_Sat ~ 3 mW/cm^2 for XA and ~ 4 mW/cm^2 for XB
-
-    laserEnergy: in unit of Gamma, relative to the energy difference E_{e}-E_{g}
-
-    polSign: -/+ determine sigma-/+. for other 'polType' these are unused
-
-    whichTransition: can be "XA" (couples X,v=0 to A,v=0), "XB" (couples X,v=0 to B,v=0), and "XARepump" (couples X,v=1 to A,v=0).
-        if there is no "XARepump", vibrational branching IS TURNED OFF (obviously, or else all population would accumulate in v=1).
-        "CouplingMatrices" and "laser masks" populate based on what values of "whichTransition" are chosen. 
-
-    polType: can be "3D" (sig +/-, with z-axis (quadrupole coil axis) reversed wrt other axes), "2DSS" (sig +/- but lasers only in x,y direction. if \\sig+ along +x then \\sig- along +y),  
-        "2DPar"(lasers in x,y direction both polarized along z), "2DPerp" (x laser polarized along y, y polarized along z), "Slower" (z laser linearly polarized along x). 
-
-    sidebandFreqs: in unit of Gamma
-
-    sidebandAmps: in unit of radians
-
-    wavenumberRatios: ratio of k_{Laser} to k_{A} 
-
-    laserMasks: make "Masks" for lasers based on what transition the laser corresponds to. This is multiplied element-wise with coupling matrix in the OBE solver (densityMatrixChangeTerms). 
-        This is zero for terms that are not coupled together by the matrix (e.g., turns off X->A coupling for X->B laser, etc. and 1 for terms that are)
-
-    numLasers: number of lasers
-    
-    beamWaistInMM: in unit of mm, only used if polType is 3D. Handles finite MOT beam waists
-
-    laserBeamWaist: in unit of 1/k, converted from beamWaistInMM
-    """
-
-    @kwdef struct Lasers
-        s0::Vector{Float64}
-        laserEnergy::Vector{Float64}
-        polSign::Vector{Int64}
-        whichTransition::Vector{String}
-        polType::Vector{String}
-        sidebandFreqs::Vector{Float64}
-        sidebandAmps::Vector{Float64}
-        wavenumberRatios::Vector{Float64}
-        laserMasks::Vector{Matrix{Float64}}
-        numLasers::Int64
-        beamWaistInMM::Float64
-        beamWaist::Float64
-    end
 
     function generateLaserSettings(mol::Molecule)::Lasers
 

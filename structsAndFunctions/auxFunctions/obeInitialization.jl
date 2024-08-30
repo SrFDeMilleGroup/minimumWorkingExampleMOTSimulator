@@ -2,9 +2,7 @@ module obeInitialization
 
     using Random: Xoshiro
 
-    using ..moleculeVariables: Molecule
-    using ..laserSettings: Lasers
-    using ..generalSettings: GeneralSettings
+    using ...structs: Lasers, Molecule, GeneralSettings # each successive . leads to the parent of the current module
 
     export preInitializer, generateRandPosAndVel, createCouplingTermsandLaserMasks
 

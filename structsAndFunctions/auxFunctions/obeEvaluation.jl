@@ -2,9 +2,7 @@ module obeEvaluation
 
     using LinearAlgebra: mul!
 
-    using ..moleculeVariables: Molecule
-    using ..laserSettings: Lasers
-    using ..generalSettings: GeneralSettings
+    using ...structs: Molecule, Lasers, GeneralSettings # each successive . leads to the parent of the current module
 
     export densityMatrixChangeTerms!
 

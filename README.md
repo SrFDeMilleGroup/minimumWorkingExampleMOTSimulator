@@ -11,9 +11,10 @@ Follow the instructions [here](https://julialang.org/downloads/) to use terminal
 2. clarify about dragging molecule through laser field with constant v, random initial position and average, Hamiltonian period
 3. what we actually save: f dot v / |v|, etc
 4. using .= in OBE solver iteration function to avoid re-allocating memory. So pre-cached array may have different values every iteration. Check its value before using it. @. faster
-5. save all settings, save all numbers in one file, save units, save in .csv
-6. analysis code
-7. extend to cluster
-8. parallelize
-9. longitudinal static B field
-10. frequency round to 0.1
+5. julia's annoying file/module system (can only include once, have to using from main module)
+6. save all settings, save all numbers in one file, save units, save in .csv
+7. analysis code
+8. extend to cluster
+9. parallelize
+10. longitudinal static B field
+11. frequency round to 0.1

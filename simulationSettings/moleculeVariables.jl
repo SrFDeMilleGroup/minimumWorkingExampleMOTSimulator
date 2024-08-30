@@ -8,31 +8,10 @@ module moleculeVariables
     unit of force: 1e-3 * hbar * Gamma * k (??)
     """
 
-    export Molecule, SrF, CaF, BaF, MgF, CaOH, SrOH
+    using ..structs: Molecule
 
-    @kwdef struct Molecule
-        lamdaA::Float64 # m, note: positions normalized to \tilde{x}=k_{SrF,X->A}x
-        lamdaB::Float64 # m
-        lamdaRepump::Float64 # m
-        v1BranchingRatioA::Float64 # ratio of population decay from A\pi,v=0 into X\Sigma,v=1
-        v1BranchingRatioB::Float64 # ratio of population decay from B\Sigma,v=0 into X\Sigma,v=1
-        Gamma::Float64 # Hz, linewidth (happens to be same for B and A).  Haven't figure out a good way to implement differing gamma in bichromatic traps.
-        
-        mass::Float64 # kg, mass of SrF
-        jMixingRatioA::Float64 # j mixing terms a and b, see john barry thesis chapt 2
-        gFactors::Vector{Float64} # g values.  First 3 are for X state F=1DOWN, F=1UP, F=2. 4th is for A state F=1, 5th is for B state F=1.
-        stateEnergiesGround::Vector{Float64} # in unit of \hbar\Gamma, X\Sigma hyperfine energies, with 0 corresponding to the F=1\DOWN energy
-        stateEnergiesExcited::Vector{Float64} # in unit of \hbar\Gamma, Energy of F=0 relative to "0" (F=1).  Entry 1 for A state, Entry 2 for B State.  Splitting negligible in A state (probably not zero, update if we ever measure this)
-    
-        jMixingRatioB::Float64 = sqrt(1 - jMixingRatioA^2)
-        normalizedBohrMag::Float64 = 2 * pi * 1.39962449171e6 / Gamma # in units hbar * Gamma / Gauss, bohr magneton = 1.4 MHz/G
-        kA::Float64 = 2 * pi / lamdaA # wavevector
-        kB::Float64 = 2 * pi / lamdaB
-        kRepump::Float64 = 2 * pi / lamdaRepump
-        velFactor::Float64 = Gamma / kA
-        hbar::Float64 = 1.05e-34 # SI units
-        accelFactor::Float64 = 1e-3 * hbar * kA * Gamma / mass # normalized force units in program are 1e-3\hbar*k*\gam. So the factor converts this to m/s^2
-    end
+    export SrF, CaF, BaF, MgF, CaOH, SrOH
+
 
     SrF = Molecule(lamdaA = 663e-9, # m, note: positions normalized to \tilde{x}=k_{SrF,X->A}x 
                    lamdaB = 579e-9, # m
