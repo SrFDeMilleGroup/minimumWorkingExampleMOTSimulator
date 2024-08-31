@@ -16,7 +16,7 @@ module generalSettings
         @assert bFieldSetting in ["ThreeD", "TwoD", "Static"] "Invalid bFieldSetting value: $bFieldSetting. It must be one of ['ThreeD', 'TwoD', 'Static']."
 
         bGrad = bFieldSetting == "Static" ? bGradReal : (1 / mol.kA * 1e2) * bGradReal
-        return GeneralSettings(numTrialsPerValueSet, displacementsInMM, initDispDir, longSpeeds, userSpeeds, velDirRelToR, forceProfile, bGradReal, bGrad, bFieldSetting)
+        return GeneralSettings(simulationType, numTrialsPerValueSet, displacementsInMM, initDispDir, longSpeeds, userSpeeds, velDirRelToR, forceProfile, bGradReal, bGrad, bFieldSetting)
     
     end
 end

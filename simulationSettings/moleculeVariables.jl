@@ -13,7 +13,8 @@ module moleculeVariables
     export SrF, CaF, BaF, MgF, CaOH, SrOH
 
 
-    SrF = Molecule(lamdaA = 663e-9, # m, note: positions normalized to \tilde{x}=k_{SrF,X->A}x 
+    SrF = Molecule(name = "SrF",
+                   lamdaA = 663e-9, # m, note: positions normalized to \tilde{x}=k_{SrF,X->A}x 
                    lamdaB = 579e-9, # m
                    lamdaRepump = 685e-9, # m
                    v1BranchingRatioA = 1/50, # ratio of population decay from A\pi,v=0 into X\Sigma,v=1
@@ -26,7 +27,8 @@ module moleculeVariables
                    stateEnergiesExcited = [0.0, -2.0] # in unit of \hbar\Gamma, Energy of F=0 relative to "0" (F=1).  Entry 1 for A state, Entry 2 for B State.  Splitting negligible in A state (probably not zero, update if we ever measure this
                    )
 
-    CaF = Molecule(lamdaA = 606e-9,
+    CaF = Molecule(name = "CaF",
+                   lamdaA = 606e-9,
                    lamdaB = 531e-9,
                    lamdaRepump = 628e-9,
                    v1BranchingRatioA = 1 - 0.978,
@@ -39,7 +41,8 @@ module moleculeVariables
                    stateEnergiesExcited = [0.0, -3.1]
                    )
 
-    BaF = Molecule(lamdaA = 860e-9,
+    BaF = Molecule(name = "BaF",
+                   lamdaA = 860e-9,
                    lamdaB = 736.7e-9,
                    lamdaRepump = 896e-9,
                    v1BranchingRatioA = 1 - 0.9508,
@@ -52,7 +55,8 @@ module moleculeVariables
                    stateEnergiesExcited = [-5.6, -3.1]
                    )
 
-    MgF = Molecule(lamdaA = 359.3e-9,
+    MgF = Molecule(name = "MgF",
+                   lamdaA = 359.3e-9,
                    lamdaB = 268.9e-9,
                    lamdaRepump = 368.7e-9,
                    v1BranchingRatioA = 1 - 0.97,
@@ -65,7 +69,8 @@ module moleculeVariables
                    stateEnergiesExcited = [0.0, -3.1]
                    )
 
-    CaOH = Molecule(lamdaA = 626.4e-9,
+    CaOH = Molecule(name = "CaOH",
+                    lamdaA = 626.4e-9,
                     lamdaB = 555.2e-9,
                     lamdaRepump = 651e-9,
                     v1BranchingRatioA = 1 - 0.9521,
@@ -78,7 +83,8 @@ module moleculeVariables
                     stateEnergiesExcited = [0.0, -3.5]
                     )
 
-    SrOH = Molecule(lamdaA = 688e-9,
+    SrOH = Molecule(name = "SrOH",
+                    lamdaA = 688e-9,
                     lamdaB = 611e-9,
                     lamdaRepump = 713.4e-9,
                     v1BranchingRatioA = 1 - 0.96,

@@ -1,4 +1,6 @@
 """
+simulationType: string, e.g., redMOT, blueMOT, transCooling, etc.
+
 numTrialsPerValueSet: number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
 
 displacementsInMM: mm, initial displacements from either origin (if 3D) or else z-axis (if 2D) in mm
@@ -24,7 +26,8 @@ or static "Static" (2D transverse slowing primarily, could also use to simulate 
 
 
 # A) parameters for quick test of restoring force
-numTrialsPerValueSet::Int64 = 100
+simulationType = "SrFRedMOTNormalValues"
+numTrialsPerValueSet::Int64 = 2
 # displacementsInMM::Vector{Float64} = [0.5, 1.5, 3.0, 4.5, 6.0, 7.5]
 displacementsInMM::Vector{Float64} = [0.5, 3.0]
 initDispDir::String = "XY"
@@ -37,6 +40,7 @@ bGradReal::Float64 = 12.5
 bFieldSetting::String = "ThreeD"
 
 # B) typical choices for simulating red-MOT
+# simulationType = "SrFRedMOTNormalValues"
 # numTrialsPerValueSet::Int64 = 100
 # displacementsInMM::Vector{Float64} = [1, 2, 3, 5, 7, 9, 11, 14, 17]
 # initDispDir::String = "XY"
@@ -48,6 +52,7 @@ bFieldSetting::String = "ThreeD"
 # bFieldSetting::String = "ThreeD"
 
 # C) typical choices for quick checks of red-det sub-doppler heating magnitude (ideally not too large) + magnitude of ~20 m/s de-celeration (should be high for red MOT)
+# simulationType = "SrFRedMOTNormalValues"
 # numTrialsPerValueSet::Int64 = 100
 # displacementsInMM::Vector{Float64} = [0.1]
 # initDispDir::String = "XY"
@@ -59,6 +64,7 @@ bFieldSetting::String = "ThreeD"
 # bFieldSetting::String = "ThreeD"
 
 # D) typical choices for quick checks of sub-doppler trasnverse cooling
+# simulationType = "SrFTransCooling"
 # numTrialsPerValueSet::Int64 = 100
 # displacementsInMM::Vector{Float64} = [0.1]
 # initDispDir::String = "XY"
@@ -70,6 +76,7 @@ bFieldSetting::String = "ThreeD"
 # bFieldSetting::String = "Static"
 
 # E) typical choices for simulating blue-MOT
+# simulationType = "SrFblueMOTNormalValues"
 # numTrialsPerValueSet::Int64 = 100
 # displacementsInMM::Vector{Float64} = [.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6]
 # initDispDir::String = "XY"
@@ -81,6 +88,7 @@ bFieldSetting::String = "ThreeD"
 # bFieldSetting::String = "ThreeD"
 
 # F) typical choices for simulating slowing
+# simulationType = "SrFSlowing"
 # numTrialsPerValueSet::Int64 = 100
 # displacementsInMM::Vector{Float64} = [0.01]
 # initDispDir::String = "XY"

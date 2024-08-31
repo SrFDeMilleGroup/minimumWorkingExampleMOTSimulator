@@ -1,16 +1,20 @@
-# unit of energy: hbar * Gamma
-# unit of velocity: Gamma / k, where k is the wavevector
-# unit of time: 1 / Gamma
-# unit of length: 1 / k (= wavelength / 2pi)
-# unit of force: 1e-3 * hbar * Gamma * k (??)
-
 module structs
+
+    """
+    unit of energy: hbar * Gamma
+    unit of velocity: Gamma / k, where k is the wavevector
+    unit of time: 1 / Gamma
+    unit of length: 1 / k (= wavelength / 2pi)
+    unit of force: 1e-3 * hbar * Gamma * k (??)
+    """
 
     export Molecule, Lasers, GeneralSettings
 
     @kwdef struct Molecule
 
         """
+        name: name of molecule
+
         lambdaA: m, XA trasition wavelength. Note: positions normalized to \\tilde{x}=k_{X->A}x
         lambdaB: m, XB transition wavelength
         lambdaRepump: m, v10 XA repump transition wavelength
@@ -32,8 +36,10 @@ module structs
         kRepump: wavevector
         velFactor: unit of velocity in this simulation, Gamma / kA
         hbar: SI units
-        accelFactor: normalized force units in program are 1e-3\\hbar*k*\\gam. So the factor converts this to m/s^2
+        accelFactor: normalized force units in program are 1e-3\\hbar*k*\\gam. So the factor converts this to mm/ms^2
         """
+
+        name::String
 
         lamdaA::Float64
         lamdaB::Float64
@@ -54,8 +60,8 @@ module structs
         kB::Float64 = 2 * pi / lamdaB
         kRepump::Float64 = 2 * pi / lamdaRepump
         velFactor::Float64 = Gamma / kA
-        hbar::Float64 = 1.05e-34
-        accelFactor::Float64 = 1e-3 * hbar * kA * Gamma / mass
+        hbar::Float64 = 1.05457182e-34
+        accelFactor::Float64 = (1e-3 * hbar * kA * Gamma / mass) * 1e-3
     end
 
 
@@ -109,6 +115,8 @@ module structs
     @kwdef struct GeneralSettings
 
         """
+        simulationType: string, e.g., redMOT, blueMOT, transCooling, etc.
+
         numTrialsPerValueSet: number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
 
         displacementsInMM: mm, initial displacements from either origin (if 3D) or else z-axis (if 2D) in mm
@@ -133,6 +141,7 @@ module structs
             or static "Static" (2D transverse slowing primarily, could also use to simulate e.g. lambda-cooling in 3D field).
         """
 
+        simulationType::String
         numTrialsPerValueSet::Int64
         displacementsInMM::Vector{Float64}
         initDispDir::String

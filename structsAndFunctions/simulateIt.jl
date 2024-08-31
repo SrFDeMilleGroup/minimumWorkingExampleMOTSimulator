@@ -1,10 +1,12 @@
-# unit of energy: hbar * Gamma
-# unit of velocity: Gamma / k, where k is the wavevector
-# unit of time: 1 / Gamma
-# unit of length: 1 / k (= wavelength / 2pi)
-# unit of force: 1e-3 * hbar * Gamma * k (??)
-
 module simulateIt
+
+    """
+    unit of energy: hbar * Gamma
+    unit of velocity: Gamma / k, where k is the wavevector
+    unit of time: 1 / Gamma
+    unit of length: 1 / k (= wavelength / 2pi)
+    unit of force: 1e-3 * hbar * Gamma * k (??)
+    """
 
     using DifferentialEquations: ODEProblem, EnsembleProblem, solve, remake, Tsit5, EnsembleThreads
     using BenchmarkTools: @time
@@ -99,23 +101,16 @@ module simulateIt
         ## Force calculation ##
 
         forceVsTime = zeros(length(saveTimes), 3) # 3 is for x, y, z three different directions
-        forceProjOnVel = Vector{Float64}(general.numTrialsPerValueSet * 2) # a \dot v/|v|
-        forceProjOnPos = Vector{Float64}(general.numTrialsPerValueSet * 2) # a \dot r/|r|
-
-        if general.forceProfile == "TwoD"
-            forceProjOnLong = Vector{Float64}(general.numTrialsPerValueSet * 2) # az
-        elseif general.forceProfile == "ThreeD"
-        else
-            # this line will remind myself that if I add more options for forceProfile, I need to come back to change the condition statement here
-            error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
-        end
+        forceProjOnVel = Vector{Float64}(undef, general.numTrialsPerValueSet * 2) # a \dot v/|v|
+        forceProjOnPos = Vector{Float64}(undef, general.numTrialsPerValueSet * 2) # a \dot r/|r|
+        forceProjOnLong = zeros(Float64, general.numTrialsPerValueSet * 2) # a_z, won't be used if forceProfile is "ThreeD", so initialize to zero rather than uninitialized
 
         # population on each hyperfine level
-        pExc = Vector{Float64}(general.numTrialsPerValueSet * 2)
-        pF1Down = Vector{Float64}(general.numTrialsPerValueSet * 2)
-        pF0 = Vector{Float64}(general.numTrialsPerValueSet * 2)
-        pF1Up = Vector{Float64}(general.numTrialsPerValueSet * 2)
-        pF2 = Vector{Float64}(general.numTrialsPerValueSet * 2)
+        pExc = Vector{Float64}(undef, general.numTrialsPerValueSet * 2)
+        pF1Down = Vector{Float64}(undef, general.numTrialsPerValueSet * 2)
+        pF0 = Vector{Float64}(undef, general.numTrialsPerValueSet * 2)
+        pF1Up = Vector{Float64}(undef, general.numTrialsPerValueSet * 2)
+        pF2 = Vector{Float64}(undef, general.numTrialsPerValueSet * 2)
 
         # initialize some 'masks' that zero out subset of population values...helpful for quick calculation of populations in various ground states
         maskExc = zeros(numZeemanStatesTotal, numZeemanStatesTotal)
@@ -166,13 +161,9 @@ module simulateIt
         forceProjOnPosAvg = mean(forceProjOnPos)
         forceProjOnPosUnc = std(forceProjOnPos) / sqrt(general.numTrialsPerValueSet * 2)
 
-        if general.forceProfile == "TwoD"
-            forceProjOnLongAvg = mean(forceProjOnLong)
-            forceProjOnLongUnc = std(forceProjOnLong) / sqrt(general.numTrialsPerValueSet * 2)
-        elseif general.forceProfile == "ThreeD"
-        else
-            error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
-        end
+        # forceProjOnLong is just zero if forceProfile is "ThreeD"
+        forceProjOnLongAvg = mean(forceProjOnLong)
+        forceProjOnLongUnc = std(forceProjOnLong) / sqrt(general.numTrialsPerValueSet * 2)
 
         pExcAvg = mean(pExc)
         pF1DownAvg = mean(pF1Down)
@@ -180,13 +171,6 @@ module simulateIt
         pF1UpAvg = mean(pF1Up)
         pF2Avg = mean(pF2)
 
-        if general.forceProfile == "TwoD"
-            return (forceProjOnVelAvg, forceProjOnVelUnc, forceProjOnPosAvg, forceProjOnPosUnc, forceProjOnLongAvg, forceProjOnLongUnc, pExcAvg, pF1DownAvg, pF0Avg, pF1UpAvg, pF2Avg)
-        elseif general.forceProfile == "ThreeD"
-            return (forceProjOnVelAvg, forceProjOnVelUnc, forceProjOnPosAvg, forceProjOnPosUnc, pExcAvg, pF1DownAvg, pF0Avg, pF1UpAvg, pF2Avg)
-        else
-            error("Invalid forceProfile value: $forceProfile. It must be either 'ThreeD' or 'TwoD'.")
-        end
-
+        return (forceProjOnVelAvg, forceProjOnVelUnc, forceProjOnPosAvg, forceProjOnPosUnc, forceProjOnLongAvg, forceProjOnLongUnc, pExcAvg, pF1DownAvg, pF0Avg, pF1UpAvg, pF2Avg)
     end
 end
