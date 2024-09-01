@@ -15,6 +15,5 @@ Follow the instructions [here](https://julialang.org/downloads/) to use terminal
 6. save all settings, save all numbers in one file, save units, save in .csv
 7. analysis code
 8. extend to cluster
-9. parallelize
-10. longitudinal static B field
-11. frequency round to 0.1
+9. longitudinal static B field
+10. frequency round to 0.1

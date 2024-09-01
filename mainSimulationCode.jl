@@ -59,5 +59,5 @@ general_list = fill(general, length(displacements_list))
 
 ## 3) save simulation results and settings ##
 
-saveToCsv(mol, lasers, general, displacements_list, longSpeeds_list, userSpeeds_list, obeResults)
+saveToCsv(mol, lasers, general, displacements_list, userSpeeds_list, longSpeeds_list, obeResults)
         
