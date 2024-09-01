@@ -9,6 +9,8 @@ unit of force: 1e-3 * hbar * Gamma * k (??)
 using Distributed: @everywhere, pmap, addprocs
 using BenchmarkTools: @time
 
+addprocs(4) # add 4 worker processes for parallel computing
+
 
 ## 1) Go to directory and load external variables + functions ##
 
@@ -16,27 +18,27 @@ using BenchmarkTools: @time
 cd(@__DIR__)
 
 # import structs
-include("./structsAndFunctions/structs.jl")
-using .structs: Molecule, Lasers, GeneralSettings
+@everywhere include("./structsAndFunctions/structs.jl")
+@everywhere using .structs: Molecule, Lasers, GeneralSettings
 
 # define molecule constants
-include("./simulationSettings/moleculeVariables.jl")
-using .moleculeVariables: SrF, CaF, BaF, MgF, CaOH, SrOH
-mol = SrF
+@everywhere include("./simulationSettings/moleculeVariables.jl")
+@everywhere using .moleculeVariables: SrF, CaF, BaF, MgF, CaOH, SrOH
+@everywhere mol = SrF
 
 # User choices for laser parameters (detuning, polarization, etc) example laser values (these all work for SrF).
-include("./structsAndFunctions/generateLaserSettings.jl")
-using .laserSettings: generateLaserSettings
-lasers = generateLaserSettings(mol)
+@everywhere include("./structsAndFunctions/generateLaserSettings.jl")
+@everywhere using .laserSettings: generateLaserSettings
+@everywhere lasers = generateLaserSettings(mol)
 
 # Non Laser Detuning/Pol Simulation Variables (B-field, beam-waist etc.)
-include("./structsAndFunctions/generateGeneralSettings.jl")
-using .generalSettings: generateGeneralSettings
-general = generateGeneralSettings(mol)
+@everywhere include("./structsAndFunctions/generateGeneralSettings.jl")
+@everywhere using .generalSettings: generateGeneralSettings
+@everywhere general = generateGeneralSettings(mol)
 
 # actual OBE simulation functinos
-include("./structsAndFunctions/simulateIt.jl")
-using .simulateIt: simulateOBE
+@everywhere include("./structsAndFunctions/simulateIt.jl")
+@everywhere using .simulateIt: simulateOBE
 
 # save simulation results and settings
 include("./structsAndFunctions/saveSimulation.jl")
@@ -52,7 +54,7 @@ mol_list = fill(mol, length(displacements_list))
 lasers_list = fill(lasers, length(displacements_list))
 general_list = fill(general, length(displacements_list))
 
-obeResults = pmap(simulateOBE, mol_list, lasers_list, general_list, displacements_list, userSpeeds_list, longSpeeds_list)
+@time obeResults = pmap(simulateOBE, mol_list, lasers_list, general_list, displacements_list, userSpeeds_list, longSpeeds_list)
 
 
 ## 3) save simulation results and settings ##

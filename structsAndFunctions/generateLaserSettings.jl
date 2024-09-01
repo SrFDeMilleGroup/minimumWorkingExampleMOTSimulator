@@ -7,7 +7,7 @@ module laserSettings
 
     function generateLaserSettings(mol::Molecule)::Lasers
 
-        include("./simulationSettings/laserSettings.jl")
+        include(dirname(@__DIR__) * "/simulationSettings/laserSettings.jl") # @__DIR__ returnd the directory of this script
 
         @assert length(s0) == length(laserEnergy) == length(polSign) == length(whichTransition) == length(polType) == length(sidebandFreqs) == length(sidebandAmps) "All laser settings arrays must have the same length."
         @assert all([i in [1, -1] for i in polSign]) "Invalid polSign value(s): $polSign. All values must be either 1 or -1."

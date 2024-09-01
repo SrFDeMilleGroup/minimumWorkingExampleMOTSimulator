@@ -7,7 +7,7 @@ module generalSettings
 
     function generateGeneralSettings(mol::Molecule)::GeneralSettings
 
-        include("./simulationSettings/generalSettings.jl")
+        include(dirname(@__DIR__) * "/simulationSettings/generalSettings.jl") # @__DIR__ returnd the directory of this script
 
         @assert numTrialsPerValueSet > 0 "Invalid numTrialsPerValueSet value: $numTrialsPerValueSet. It must be greater than 0."
         @assert initDispDir in ["XY", "Z"] "Invalid initDispDir value: $initDispDir. It must be either 'XY' or 'Z'. "
