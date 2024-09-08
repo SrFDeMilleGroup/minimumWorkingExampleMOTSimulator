@@ -13,6 +13,7 @@ module simulateIt
     using LinearAlgebra: tr, I
     using Statistics: mean, std
     using Trapz: trapz
+    using Accessors: @reset
 
     using ..structs: Molecule, Lasers, GeneralSettings
 
@@ -32,6 +33,26 @@ module simulateIt
     function simulateOBE(mol::Molecule, lasers::Lasers, general::GeneralSettings, currDisp::Float64, currSpeed::Float64, currLongSpeed::Float64)
 
         ## OBE initialization ##
+
+        # Set vRound and freqRound for velocity and laser frequency/molecule energy to round to
+        # The maximum common divisor of vRound and freqRound, say valRound, will set the hamiltonian period to be 2*pi/valRound
+        if abs(currSpeed) < 0.04
+            vRound = 0.002
+        elseif abs(currSpeed) < 0.1
+            vRound = 0.01
+        elseif abs(currSpeed) < 0.5
+            vRound = 0.02
+        else
+            vRound = 0.05
+        end
+
+        (randRxs, randRys, randRzs, randVxs, randVys, randVzs) = generateRandPosAndVel(general, currDisp, currSpeed, vRound, currLongSpeed, mol)
+
+        freqRound = 0.1
+        @reset mol.stateEnergiesGround = round.(mol.stateEnergiesGround ./ freqRound) .* freqRound
+        @reset mol.stateEnergiesExcited = round.(mol.stateEnergiesExcited ./ freqRound) .* freqRound
+        @reset lasers.laserEnergy = round.(lasers.laserEnergy ./ freqRound) .* freqRound
+        @reset lasers.sidebandFreqs = round.(lasers.sidebandFreqs ./ freqRound) .* freqRound
 
         # stuff needed to determine minimum number of states, and which coupling terms to use
         (couplingMatrices, bCouplingMatrices, stateEnergyMatrix, numZeemanStatesGround, numZeemanStatesExcited) = createCouplingTermsandLaserMasks(lasers, mol)
@@ -53,22 +74,10 @@ module simulateIt
 
         # initial value of density matrix
         pStart = zeros(ComplexF64, numZeemanStatesTotal, numZeemanStatesTotal)
-        pStart[1:12, 1:12] = Matrix(I, 12, 12) ./ 12 # molecules equally populate X N=1 states
+        pStart[1:12, 1:12] .= Matrix(I, 12, 12) ./ 12 # molecules equally populate X N=1 states
 
 
         ## OBE evaluation ##
-
-        if abs(currSpeed) < 0.04
-            vRound = 0.002
-        elseif abs(currSpeed) < 0.1
-            vRound = 0.01
-        elseif abs(currSpeed) < 0.5
-            vRound = 0.02
-        else
-            vRound = 0.05
-        end
-
-        (randRxs, randRys, randRzs, randVxs, randVys, randVzs) = generateRandPosAndVel(general, currDisp, currSpeed, vRound, currLongSpeed, mol)
 
         # obtained by trial and error. Could potentially be handled more rigrorously (solve ode in steps of 'period length' until solution 'converges')
         tForSteadyState = maximum([10 / currSpeed, 270])

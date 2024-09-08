@@ -115,14 +115,13 @@ module structs
     @kwdef struct GeneralSettings
 
         """
-        simulationType: string, e.g., redMOT, blueMOT, transCooling, etc.
+        simulationType: string, notes for yourself about simulation types, e.g., redMOT, blueMOT, transCooling, etc.
 
         numTrialsPerValueSet: number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
 
-        displacementsInMM: mm, initial displacements from either origin (if 3D) or else z-axis (if 2D) in mm
+        isplacementsInMM: mm, initial displacements in xy plane (for 2d force profile) or in 3D in mm
 
-        initDispDir: if "XY", will force initial r to go along (x+y)/sqrt(2). 
-            Simulates slowing/trapping of molecules moving along slowing axis in tandem with velDirToR = "Same". If "Z", force go along Z
+        initDispDir: if "XY", will force initial r to go along (x+y)/sqrt(2). If "Z", force r to go along z. Options are ["XY", "Z", "Random"]. Doesn't matter for 2D sims. 
 
         longSpeeds: longitudinal speeds in units of Gamma/k (=4.4m/s for SrF), doesn't matter for 3D sims, sets vel to 140 m/s
 
@@ -133,12 +132,14 @@ module structs
         forceProfile: either "ThreeD", (forces calculated are (f \\dot r) / |r|, (f \\dot v) / |v|), 
             or "TwoD" (f \\dot (rx,ry,0) / |(rx,ry,0)|, f \\dot (vx,vy,0) / |(vx,vy,0|, and fz are all calculated)
 
-        bGradReal: in units Gauss/cm, unless bFieldSetting == "Static", then this becomes the static field in Gauss
+        bGradReal: in units Gauss/cm, unless bFieldSetting is static, then this becomes the static field in Gauss
 
-        bGrad: convert bGradReal to units Gauss * wavevector, unless bFieldSetting == "Static", then this remains unchanged in Gauss
+        bGrad: convert bGradReal to units Gauss * wavevector, unless bFieldSetting is static, then this remains unchanged in Gauss
 
         bFieldSetting: can set to 3D quadrupole "ThreeD" (e.g. 3D-MOT"), 2D quadrupole "TwoD" (e.g. 2D-MOT"),
-            or static "Static" (2D transverse slowing primarily, could also use to simulate e.g. lambda-cooling in 3D field).
+        or static "StaticXY" (in (x+y)/sqrt(2) direction) or "StaticZ" (in z direction). 
+        (Static B fields are used for 2D transverse slowing primarily, could also use to simulate e.g. lambda-cooling in 3D field).
+
         """
 
         simulationType::String

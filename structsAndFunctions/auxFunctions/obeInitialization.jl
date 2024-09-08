@@ -105,8 +105,16 @@ module obeInitialization
                 randRxs = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
                 randRys = 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
                 randRzs = currDisp .* 1e-3 .* mol.kA .+ 2 .* pi .* (rand(myRNG, numTrialsPerSpeed) .- 0.5)
+            elseif  initDispDir == "Random"
+                rX = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                rY = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                rZ = rand(myRNG, numTrialsPerSpeed) .- 0.5
+                normTerms = sqrt.(rX.^2 .+ rY.^2 .+ rZ.^2)
+                randRxs = rX ./ normTerms .* currDisp .* 1e-3 .* kA
+                randRys = rY ./ normTerms .* currDisp .* 1e-3 .* kA
+                randRzs = rZ ./ normTerms .* currDisp .* 1e-3 .* kA
             else
-                throw(ArgumentError(string("Invalid choice of initDispDir, ", initDispDir, ". Valid options are XY or Z.")))
+                throw(ArgumentError(string("Invalid choice of initDispDir, ", initDispDir, ". Valid options are 'XY', 'Z' or 'Random'.")))
             end
             normTerms = sqrt.(randRxs.^2 .+ randRys.^2 .+ randRzs.^2)
             randX = randRxs ./ normTerms
@@ -203,7 +211,6 @@ module obeInitialization
         numZeemanStatesTotal = numZeemanStatesGround + numZeemanStatesExcited
 
         #2)
-        # fill(groundStateEnergy, numZeemanStatesEachHyperfineLevel)
         stateEnergiesColumnFormat = [fill(mol.stateEnergiesGround[1], 3); fill(mol.stateEnergiesGround[2], 1); fill(mol.stateEnergiesGround[3], 3); fill(mol.stateEnergiesGround[4], 5)]
         if repump == 1
             # NOTE this assumes hyperfine splitting is the same in v=1 repump...not quite right but close enough

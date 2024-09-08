@@ -68,22 +68,23 @@ module obeEvaluation
         # expresses B field at position r in the \sigma^+/-, pi basis
         
         if general.bFieldSetting == "TwoD"
-            bFieldTerms[1] = 1 / sqrt(2) * (r[1] - im * r[2])
-            bFieldTerms[2] = -0 * (r[3])
-            bFieldTerms[3] = 1 / sqrt(2) * (-r[1] - im * r[2])
+            bFieldTerms[1] = 1 / sqrt(2) * (r[1] - im * r[2]) # B_{-1} = (Bx-iBy)/sqrt(2)
+            bFieldTerms[2] = -0 * (r[3]) # B_{0} = Bz
+            bFieldTerms[3] = 1 / sqrt(2) * (-r[1] - im * r[2]) # B_{+1} = -(Bx+iBy)/sqrt(2)
         elseif general.bFieldSetting == "ThreeD"
             bFieldTerms[1] = 1 / sqrt(2) * (r[1] + im * r[2])
             bFieldTerms[2] = -1 * (r[3]) # note: really this should be -2r[3] for a quadropole field.  In practice, I prefer to run my f(r) for random direction at constant B.  So, assume \tilde{r}=(x,y,z/2).
             bFieldTerms[3] = 1 / sqrt(2) * (-r[1] + im * r[2])
-        elseif general.bFieldSetting == "Static"
+        elseif general.bFieldSetting == "StaticXY"
             bFieldTerms[1] = (im+1)/2
             bFieldTerms[2] = 0
             bFieldTerms[3] = (-1+im)/2
-            # bFieldTerms[1] = 0
-            # bFieldTerms[2] = 1
-            # bFieldTerms[3] = 0
+        elseif general.bFieldSetting == "StaticZ" 
+            bFieldTerms[1] = 0
+            bFieldTerms[2] = 1
+            bFieldTerms[3] = 0
         else
-            throw(ArgumentError("Invalid bFieldSetting value: $(general.bFieldSetting). It must be one of ['ThreeD', 'TwoD', 'Static']."))
+            throw(ArgumentError("Invalid bFieldSetting value: $(general.bFieldSetting). It must be one of ['ThreeD', 'TwoD', 'StaticXY', 'StaticZ']."))
         end
     end
 
