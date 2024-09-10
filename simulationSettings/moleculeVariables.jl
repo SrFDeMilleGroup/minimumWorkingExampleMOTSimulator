@@ -1,11 +1,12 @@
 module moleculeVariables
 
     """
-    unit of energy: hbar * Gamma
-    unit of velocity: Gamma / k, where k is the wavevector
-    unit of time: 1 / Gamma
-    unit of length: 1 / k (= wavelength / 2pi)
-    unit of force: 1e-3 * hbar * Gamma * k (??)
+    - unit of frequency: Gamma, where Gamma is the linewidth of a molecular transition, usually X-A transition.
+    - unit of energy: hbar * Gamma
+    - unit of time: 1 / Gamma.
+    - unit of length: 1 / k (= wavelength / 2pi), where k is the (angular) wavenumber of a molecular transition, usually X-A transition.
+    - unit of velocity: Gamma / k.
+    - unit of force: 1e-3 * hbar * Gamma * k.
     """
 
     using ..structs: Molecule

@@ -1,11 +1,12 @@
 module structs
 
     """
-    unit of energy: hbar * Gamma
-    unit of velocity: Gamma / k, where k is the wavevector
-    unit of time: 1 / Gamma
-    unit of length: 1 / k (= wavelength / 2pi)
-    unit of force: 1e-3 * hbar * Gamma * k (??)
+    - unit of frequency: Gamma, where Gamma is the linewidth of a molecular transition, usually X-A transition.
+    - unit of energy: hbar * Gamma
+    - unit of time: 1 / Gamma.
+    - unit of length: 1 / k (= wavelength / 2pi), where k is the (angular) wavenumber of a molecular transition, usually X-A transition.
+    - unit of velocity: Gamma / k.
+    - unit of force: 1e-3 * hbar * Gamma * k.
     """
 
     export Molecule, Lasers, GeneralSettings
@@ -119,7 +120,7 @@ module structs
 
         numTrialsPerValueSet: number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
 
-        isplacementsInMM: mm, initial displacements in xy plane (for 2d force profile) or in 3D in mm
+        displacementsInMM: mm, initial displacements in xy plane (for 2d force profile) or in 3D in mm
 
         initDispDir: if "XY", will force initial r to go along (x+y)/sqrt(2). If "Z", force r to go along z. Options are ["XY", "Z", "Random"]. Doesn't matter for 2D sims. 
 
