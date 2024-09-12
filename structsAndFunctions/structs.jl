@@ -69,42 +69,53 @@ module structs
     @kwdef struct Lasers
 
         """
-        s0: single laser pass peak saturation parameter.  I_Sat ~ 3 mW/cm^2 for XA and ~ 4 mW/cm^2 for XB
+        s0: Saturation parameter corresponding the peak laser intensity of a single laser pass.  I_Sat ~ 3 mW/cm^2 for XA and ~ 4 mW/cm^2 for XB for SrF.
 
-        laserEnergy: in unit of Gamma, relative to the energy difference E_{e}-E_{g}
+        laserEnergy: in unit of Gamma, laser detuning measured from the lowest ground hyperfine level.
 
-        polSign: -/+ determine sigma-/+. for other 'polType' these are unused
+        polType: lsaer polarization and propagation direction. Options are:
+            '3D': 6 laser beams propagate in +/-x, +/-y, +/-z 6 directions respectively. 
+                    All lasers are circularly polarized, but x and y lasers have opposite polarization handedness from z lasers, as required by 3D MOT quadrupole B field. 
+                    Sigma +/- polarization is indicated by polSign. This is mainly used to simulate 3D MOT or molasses cooling.
+            '2DSS': 4 laser beams propagate in +/-x, +/-y 4 directions respectively. 
+                    All lasers are circularly polarized, but x lasers have opposite handedness from y lasers, as required by 2D MOT B field. 
+                    Sigma +/- polarization is indicated by polSign. This is mainly used to simulate 2D MOT.
+            '2DPar': 4 laser beams propagate in +/-x, +/-y 4 directions respectively. 
+                    All lasers are linear polarized along z axis. This is mainly used to simulate transverse cooling of a molecule beam, assuming it travels along z axis.
+            '2DPerp': Same as '2DPar', except x lasers are polarized along y, and y lasers are polarized along z axis.
+            'Slower': 1 laser beam propagate along -z direction, and is linearly polarized along x axis.
+            'Push': Same as 'Slower' except the laser propagates along +z direction.
+                
+        polSign: -/+ determine sigma-/+ for polType is 3D or 2DSS. For other 'polType' these are unused.
+
+        sidebandFreqs: in unit of Gamma, modulation frequencies of EO modulators.
+
+        sidebandAmps: in unit of radians, modulation depths of EO modulators.
 
         whichTransition: can be "XA" (couples X,v=0 to A,v=0), "XB" (couples X,v=0 to B,v=0), and "XARepump" (couples X,v=1 to A,v=0).
             if there is no "XARepump", vibrational branching IS TURNED OFF (obviously, or else all population would accumulate in v=1).
             "CouplingMatrices" and "laser masks" populate based on what values of "whichTransition" are chosen. 
 
-        polType: can be "3D" (sig +/-, with z-axis (quadrupole coil axis) reversed wrt other axes), "2DSS" (sig +/- but lasers only in x,y direction. if \\sig+ along +x then \\sig- along +y),  
-            "2DPar"(lasers in x,y direction both polarized along z), "2DPerp" (x laser polarized along y, y polarized along z), "Slower" (z laser linearly polarized along x). 
-
-        sidebandFreqs: in unit of Gamma
-
-        sidebandAmps: in unit of radians
-
-        wavenumberRatios: ratio of k_{Laser} to k_{A} 
+        wavenumberRatios: ratio of k_{Laser} to k_{A}.
 
         laserMasks: make "Masks" for lasers based on what transition the laser corresponds to. This is multiplied element-wise with coupling matrix in the OBE solver (densityMatrixChangeTerms). 
-            This is zero for terms that are not coupled together by the matrix (e.g., turns off X->A coupling for X->B laser, etc. and 1 for terms that are)
+            This is zero for terms that are not coupled together by the matrix (e.g., turns off X->A coupling for X->B laser, etc. and 1 for terms that are).
 
-        numLasers: number of lasers
+        numLasers: number of lasers.
         
-        beamWaistInMM: in unit of mm, only used if polType is 3D. Handles finite MOT beam waists
+        beamWaistInMM: mm, laser beam waist. Used to simulate the effects of the finite size of 3D MOT laser beams. 
+            This is only used if polType is '3D', otherwise the laser beams are assumed infinitely large.
 
-        laserBeamWaist: in unit of 1/k, converted from beamWaistInMM
+        laserBeamWaist: in unit of 1/k, converted from beamWaistInMM.
         """
 
         s0::Vector{Float64}
         laserEnergy::Vector{Float64}
-        polSign::Vector{Int64}
-        whichTransition::Vector{String}
         polType::Vector{String}
+        polSign::Vector{Int64}
         sidebandFreqs::Vector{Float64}
         sidebandAmps::Vector{Float64}
+        whichTransition::Vector{String}
         wavenumberRatios::Vector{Float64}
         laserMasks::Vector{Matrix{Float64}}
         numLasers::Int64
@@ -118,42 +129,51 @@ module structs
         """
         simulationType: string, notes for yourself about simulation types, e.g., redMOT, blueMOT, transCooling, etc.
 
-        numTrialsPerValueSet: number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds)
+        numTrialsPerValueSet: number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds).
 
-        displacementsInMM: mm, initial displacements in xy plane (for 2d force profile) or in 3D in mm
+        forceProfile: Options are:
+            'ThreeD': Used for 3D MOT and molasses simulations. 
+                        In this case, 'displacementsInMM' and 'userSpeeds' are treated as magnitudes of 3D displacements and velocities respectively. 'longSpeeds' is ignored. 
+                        The direction of initial displacements is indicated by 'initDispDir'. And the direction of velocity is set with respect to displacements by 'velDirRelToR'. 
+                        In order to account for laser field variation, the actual initial displacements in computation are randomly sampled from a cube of size of one wavelength round the values specified here. 
+                        The projections of 3D force on initial displacement f \\dot r / |r| and f \\dot v / |v| are calculated and returned. 
+            'TwoD': Used for slowing and transverse cooling simulations. 
+                        In this case, 'displacementsInMM' and 'userSpeeds' are treated as magnitudes of 2D displacements and velocities in x-y plane. 
+                        Displacement along z is taken as zero (up to a random value within +/- 1/2 wavelength from 0). 'longSpeeds' is used as velocity along z direction. 
+                        'initDispDir' is ignored, and the direction of initial displacements in x-y plane is always random. The relative direction of velocity and displacement in x-y plane is set by 'velDirRelToR'. 
+                        The projection of 3D force on x-y plane displacement f \\dot r / |r| and f \\dot v / |v|, as well as its z component f_z are calculated and returned.
 
-        initDispDir: if "XY", will force initial r to go along (x+y)/sqrt(2). If "Z", force r to go along z. Options are ["XY", "Z", "Random"]. Doesn't matter for 2D sims. 
+        displacementsInMM: mm, magnitude of initial displacements. Simulation will iterate through the entire list.
 
-        longSpeeds: longitudinal speeds in units of Gamma/k (=4.4m/s for SrF), doesn't matter for 3D sims, sets vel to 140 m/s
+        initDispDir: Direction of initial displacememnt. Only used if forceProfile is 'ThreeD'. Valid options are 'XY' ((x+y)/sqrt(2) direction, where slowed molecules come into MOT region for most experiments), 'Z' and 'Random'.
 
-        userSpeeds: in unit of Gamma/k (=4.4m/s for SrF), speeds in xy plane (for 2d force profile) or in 3D
+        longSpeeds: longitudinal speeds in units of Gamma/k (=4.4m/s for SrF), Only used if 'foreProfile' is 'TwoD'.
 
-        velDirRelToR: relative direction of molecule velocity, w.r.t. initial displacement r. Options are ["Same", "Orthogonal", "Opposite", "Random"]
+        userSpeeds: in unit of Gamma/k (=4.4m/s for SrF), speeds in xy plane (for 2d force profile) or in 3D.
 
-        forceProfile: either "ThreeD", (forces calculated are (f \\dot r) / |r|, (f \\dot v) / |v|), 
-            or "TwoD" (f \\dot (rx,ry,0) / |(rx,ry,0)|, f \\dot (vx,vy,0) / |(vx,vy,0|, and fz are all calculated)
-
-        bGradReal: in units Gauss/cm, unless bFieldSetting is static, then this becomes the static field in Gauss
-
-        bGrad: convert bGradReal to units Gauss * wavevector, unless bFieldSetting is static, then this remains unchanged in Gauss
+        velDirRelToR: relative direction of molecule velocity, w.r.t. initial displacement r. Options are ["Same", "Orthogonal", "Opposite", "Random"].
 
         bFieldSetting: can set to 3D quadrupole "ThreeD" (e.g. 3D-MOT"), 2D quadrupole "TwoD" (e.g. 2D-MOT"),
         or static "StaticXY" (in (x+y)/sqrt(2) direction) or "StaticZ" (in z direction). 
         (Static B fields are used for 2D transverse slowing primarily, could also use to simulate e.g. lambda-cooling in 3D field).
 
+        bGradReal: Gauss/cm for B field gradient, or Gauss for uniform B field, depending on 'bFieldSetting'.
+
+        bGrad: convert bGradReal to units Gauss * wavevector, unless bFieldSetting is static, then this remains unchanged in Gauss.
         """
 
         simulationType::String
         numTrialsPerValueSet::Int64
+        forceProfile::String
         displacementsInMM::Vector{Float64}
         initDispDir::String
         longSpeeds::Vector{Float64}
         userSpeeds::Vector{Float64}
         velDirRelToR::String
-        forceProfile::String
+        bFieldSetting::String
         bGradReal::Float64
         bGrad::Float64
-        bFieldSetting::String
+        
     end
 
 end

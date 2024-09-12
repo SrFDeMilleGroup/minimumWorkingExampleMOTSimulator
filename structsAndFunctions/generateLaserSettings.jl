@@ -10,9 +10,9 @@ module laserSettings
         include(dirname(@__DIR__) * "/simulationSettings/laserSettings.jl") # @__DIR__ returnd the directory of this script
 
         @assert length(s0) == length(laserEnergy) == length(polSign) == length(whichTransition) == length(polType) == length(sidebandFreqs) == length(sidebandAmps) "All laser settings arrays must have the same length."
+        @assert all([i in ["3D", "2DSS", "2DPar", "2DPerp", "Slower", "Push"] for i in polType]) "Invalid polType value(s): $polType. All values must be one of ['3D', '2DSS', '2DPar', '2DPerp', 'Slower', 'Push']."
         @assert all([i in [1, -1] for i in polSign]) "Invalid polSign value(s): $polSign. All values must be either 1 or -1."
         @assert all([i in ["XA", "XB", "XARepump"] for i in whichTransition]) "Invalid whichTransition value(s): $whichTransition. All values must be either 'XA', 'XB', or 'XARepump'."
-        @assert all([i in ["3D", "2DSS", "2DPar", "2DPerp", "Slower", "Push"] for i in polType]) "Invalid polType value(s): $polType. All values must be one of ['3D', '2DSS', '2DPar', '2DPerp', 'Slower', 'Push']."
         @assert beamWaistInMM > 0 "Invalid waistInMM value: $waistInMM. It must be greater than 0."
 
         bichrom = (("XA" in whichTransition) && ("XB" in whichTransition)) ? 1 : 0 # winds up 0 if only XA of XB are used, 1 if both are
@@ -39,7 +39,7 @@ module laserSettings
             end
         end
 
-        return Lasers(s0, laserEnergy, polSign, whichTransition, polType, sidebandFreqs, sidebandAmps, wavenumberRatios, laserMasks, length(s0), beamWaistInMM, beamWaistInMM*1e-3*mol.kA)
+        return Lasers(s0, laserEnergy, polType, polSign, sidebandFreqs, sidebandAmps, whichTransition, wavenumberRatios, laserMasks, length(s0), beamWaistInMM, beamWaistInMM*1e-3*mol.kA)
 
     end
 end

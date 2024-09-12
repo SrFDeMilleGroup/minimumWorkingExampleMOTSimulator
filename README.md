@@ -86,7 +86,7 @@ This simulation requries user inputs for laser settings, as listed here. They ca
   - 'Push': Same as 'Slower' except the laser propagates along +z direction.
 - `polSign::Vector{Int64}`: If `polType` is 3D or 2DSS, -1/+1 determines sigma-/+ polarization for lasers, otherwise this settings is unused.
 - `sidebandFreqs::Vector{Float64}`: In unit of $\Gamma$, modulation frequencies of EO modulators.
-- `sidebandAmps::Vector{Float64}`: Radian, modulation depth of EO modulators.
+- `sidebandAmps::Vector{Float64}`: Radian, modulation depths of EO modulators.
 - `whichTransition::Vector{String}`: The transition this laser addresses. Valid options are 'XA', 'XB' and 'XARepump'.
 - `beamWaistInMM::Float64`: mm, laser beam waist. Used to simulate the effects of the finite size of 3D MOT laser beams. This is only used if `polType` is '3D', otherwise the laser beams are assumed infinitely large.
 
@@ -107,12 +107,12 @@ beamWaistInMM = 7.0
 ### Simulation settings II: general settings
 All other simulation settings are summarized here. They can be modified in *simulationSettings/generalSettings.jl*.
 - `simulationType::String`: A note to user themself about the simulation.
-- `numTrialsPerValueSet::Int64`: Number of trials to run and average. Averaging is needed because we randomly choose initial molecule displacements and velocities under user specified constraints.
+- `numTrialsPerValueSet::Int64`: Number of trials per set of values (displacementsInMM, userSpeeds, longSpeeds) to run and average. Averaging is needed because we randomly choose initial molecule displacements and velocities under user specified constraints.
 - `forceProfile::String`: Valid options are below.
   - 'ThreeD': Used for 3D MOT and molasses simulations. In this case, `displacementsInMM` and `userSpeeds` are treated as magnitudes of 3D displacements and velocities respectively. `longSpeeds` is ignored. The direction of initial displacements is indicated by `initDispDir`. And the direction of velocity is set with respect to displacements by `velDirRelToR`. In order to account for laser field variation, the actual initial displacements in computation are randomly sampled from a cube of size of one wavelength round the values specified here. The projections of 3D force on initial displacement $\vec{f}\cdot\vec{r}/\left|\vec{r}\right|$ and velocity $\vec{f}\cdot\vec{v}/\left|\vec{v}\right|$ are calculated and returned. 
   - 'TwoD': Used for slowing and transverse cooling simulations. In this case, `displacementsInMM` and `userSpeeds` are treated as magnitudes of 2D displacements and velocities in x-y plane. Displacement along z is taken as zero (up to a random value within +/- 1/2 wavelength from 0). `longSpeeds` is used as velocity along z direction. `initDispDir` is ignored, and the direction of initial displacements in x-y plane is always random. The relative direction of velocity and displacement in x-y plane is set by `velDirRelToR`. The projection of 3D force on x-y plane displacement $\vec{f}\cdot\vec{r}/\left|\vec{r}\right|$ and x-y plane velocity $\vec{f}\cdot\vec{v}/\left|\vec{v}\right|$, as well as its z component $f_z$ are calculated and returned.
 - `displacementsInMM::Vector{Float64}`: mm, magnitude of initial displacements. Simulation will iterate through the entire list.
-- `initDispDir::String` : Direction of initial displacememnt. Only used if `forceProfile` is 'ThreeD'. Valid options are 'XY' ((x+y)/sqrt(2) direction), 'Z' and 'Random'.
+- `initDispDir::String` : Direction of initial displacememnt. Only used if `forceProfile` is 'ThreeD'. Valid options are 'XY' ((x+y)/sqrt(2) direction, where slowed molecules come into MOT region for most experiments), 'Z' and 'Random'.
 - `longSpeeds::Vector{Float64}`: In unit of $\Gamma/k$, a list of molecule beam longitudinal speeds to simulate through. Only used if `foreProfile` is 'TwoD'.
 - `userSpeeds::Vector{Float64}`: In unit of $\Gamma/k$, a list of molecule speeds to simulate through.
 - `velDirRelToR::String`: Relative direction of `userSpeeds` and `displacementsInMM`. Valid options are 'Same', 'Orthogonal', 'Opposite' and 'Random'.
@@ -123,7 +123,7 @@ All other simulation settings are summarized here. They can be modified in *simu
   - 'StaticZ': Same as 'StaticXY' but B field along z direction.
 - `bGradReal::Float64`: Gauss/cm for B field gradient, or Gauss for uniform B field, depending on `bFieldSetting`.
 
-Here we also present a typical set of values for 3D MOT simulation (SrF 5-frequency red-detuned DC MOT).
+Here we also present a typical set of values for 3D MOT simulation.
 ```julia
 simulationType = "SrFRedMOTNormalValues"
 numTrialsPerValueSet::Int64 = 100
@@ -141,5 +141,6 @@ bGradReal::Float64 = 12.5
 ## To-do
 1. analysis code
 2. extend to cluster
-3. implementing randomized laser phases
+3. implement randomized laser phases
 4. specify package version
+5. implement machine learning to further optimize MOT and slowing
